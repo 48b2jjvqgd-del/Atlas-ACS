@@ -1,0 +1,23 @@
+{
+  "name": "@atlas/integration-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Integration tests against real PostgreSQL, Valkey and RabbitMQ. Requires local infrastructure.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@atlas/acs-core": "workspace:*",
+    "@atlas/contracts": "workspace:*",
+    "@atlas/database": "workspace:*",
+    "@atlas/observability": "workspace:*",
+    "@atlas/service-kit": "workspace:*",
+    "ioredis": "^6.0.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}

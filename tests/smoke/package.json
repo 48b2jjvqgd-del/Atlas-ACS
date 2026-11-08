@@ -1,0 +1,14 @@
+{
+  "name": "@atlas/smoke-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Starts every built service as a real process and verifies startup, health and graceful shutdown.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@atlas/contracts": "workspace:*"
+  }
+}

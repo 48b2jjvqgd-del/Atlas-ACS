@@ -1,0 +1,16 @@
+{
+  "name": "@atlas/e2e-tests",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Playwright end-to-end tests for the ATLAS portal.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "install-browsers": "playwright install --with-deps chromium",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.65.0"
+  }
+}

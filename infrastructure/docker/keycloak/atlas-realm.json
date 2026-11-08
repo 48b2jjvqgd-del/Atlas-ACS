@@ -1,0 +1,47 @@
+{
+  "realm": "atlas",
+  "displayName": "ATLAS ACS (development)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "bruteForceProtected": true,
+  "passwordPolicy": "length(12) and notUsername",
+  "accessTokenLifespan": 300,
+  "smtpServer": {
+    "host": "mailpit",
+    "port": "1025",
+    "from": "no-reply@atlas.local",
+    "fromDisplayName": "ATLAS (development)"
+  },
+  "roles": {
+    "realm": [
+      {
+        "name": "platform-administrator",
+        "description": "Operates the ATLAS platform across all tenants."
+      },
+      { "name": "issuer-administrator", "description": "Administers a single issuer tenant." },
+      { "name": "issuer-analyst", "description": "Read-only access to a single issuer tenant." }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "atlas-portal",
+      "name": "ATLAS Portal",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:5173/*", "http://localhost:8080/*"],
+      "webOrigins": ["http://localhost:5173", "http://localhost:8080"],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:5173/*##http://localhost:8080/*"
+      }
+    }
+  ]
+}

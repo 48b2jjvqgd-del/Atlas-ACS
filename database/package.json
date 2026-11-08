@@ -1,0 +1,37 @@
+{
+  "name": "@atlas/database",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ATLAS database migrations, development seeds and tooling. Migrations are grouped by owning service.",
+  "license": "UNLICENSED",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@atlas/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "migrations",
+    "seeds"
+  ],
+  "scripts": {
+    "migrate": "tsx --conditions=@atlas/source --env-file-if-exists=../.env src/cli/migrate.ts",
+    "seed": "tsx --conditions=@atlas/source --env-file-if-exists=../.env src/cli/seed.ts",
+    "migrate:prod": "node dist/cli/migrate.js",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@atlas/contracts": "workspace:*",
+    "@atlas/security": "workspace:*",
+    "@atlas/shared": "workspace:*",
+    "node-pg-migrate": "^9.0.0",
+    "pg": "^8.23.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.23.1"
+  }
+}
