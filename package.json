@@ -1,0 +1,49 @@
+{
+  "name": "atlas-acs",
+  "private": true,
+  "description": "ATLAS ACS — independent, extensible EMV 3-D Secure Access Control Server (Stage 0 foundation)",
+  "license": "UNLICENSED",
+  "type": "module",
+  "packageManager": "pnpm@12.16.1",
+  "engines": {
+    "node": ">=24.0.0 <25"
+  },
+  "scripts": {
+    "setup:env": "node scripts/init-env.mjs",
+    "build": "pnpm -r --filter \"./packages/**\" --filter \"./services/**\" --filter \"./apps/**\" --filter \"./database\" run build",
+    "typecheck": "pnpm -r run typecheck",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --project unit",
+    "test:watch": "vitest --project unit",
+    "test:smoke": "vitest run --project smoke",
+    "test:integration": "vitest run --project integration",
+    "test:e2e": "pnpm --filter @atlas/e2e-tests test",
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
+    "audit:deps": "pnpm audit --audit-level high",
+    "dev:services": "pnpm -r --parallel --filter \"./services/**\" run dev",
+    "dev:portal": "pnpm --filter @atlas/portal dev",
+    "db:migrate": "pnpm --filter @atlas/database migrate up",
+    "db:rollback": "pnpm --filter @atlas/database migrate down",
+    "db:status": "pnpm --filter @atlas/database migrate status",
+    "db:seed": "pnpm --filter @atlas/database seed",
+    "infra:up": "docker compose up -d --wait",
+    "infra:down": "docker compose down",
+    "stack:up": "docker compose --profile services up -d --build --wait",
+    "stack:down": "docker compose --profile services --profile identity down"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.19.2",
+    "eslint": "^10.14.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.1.0"
+  }
+}
