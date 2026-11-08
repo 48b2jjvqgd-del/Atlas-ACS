@@ -13,7 +13,7 @@ COPY . .
 RUN --mount=type=cache,id=atlas-pnpm-store,target=/pnpm/store pnpm install --offline --frozen-lockfile
 RUN pnpm --filter @atlas/portal... run build
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
 COPY infrastructure/docker/portal/nginx.conf /etc/nginx/conf.d/default.conf
 COPY infrastructure/docker/portal/security-headers.conf /etc/nginx/snippets/security-headers.conf
 COPY --from=build /repo/apps/portal/dist /usr/share/nginx/html
