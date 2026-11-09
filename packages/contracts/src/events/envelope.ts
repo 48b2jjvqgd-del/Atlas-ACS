@@ -44,7 +44,8 @@ export type EventEnvelope<T = unknown> = Omit<z.infer<typeof eventEnvelopeSchema
 
 export interface EventContract<T extends z.ZodType = z.ZodType> {
   readonly type: string;
-  readonly producer: z.infer<typeof serviceNameSchema>;
+  /** Services permitted to publish this event. */
+  readonly producers: readonly z.infer<typeof serviceNameSchema>[];
   readonly dataSchema: T;
   readonly schemaUri: string;
   readonly description: string;
@@ -56,14 +57,25 @@ export interface EventContract<T extends z.ZodType = z.ZodType> {
  *  - Removing/renaming a field or changing its meaning or type is breaking: publish a new
  *    type with an incremented major (…v2) and run both in parallel until consumers migrate.
  */
-export function defineEvent<T extends z.ZodType>(definition: {
-  type: string;
-  producer: z.infer<typeof serviceNameSchema>;
-  dataSchema: T;
-  description: string;
-}): EventContract<T> {
+export function defineEvent<T extends z.ZodType>(
+  definition: {
+    type: string;
+    dataSchema: T;
+    description: string;
+  } & (
+    | { producer: z.infer<typeof serviceNameSchema> }
+    | { producers: readonly z.infer<typeof serviceNameSchema>[] }
+  ),
+): EventContract<T> {
   eventTypeSchema.parse(definition.type);
-  return { ...definition, schemaUri: `urn:atlas:contract:event:${definition.type}` };
+  const producers = 'producers' in definition ? definition.producers : [definition.producer];
+  return {
+    type: definition.type,
+    producers,
+    dataSchema: definition.dataSchema,
+    description: definition.description,
+    schemaUri: `urn:atlas:contract:event:${definition.type}`,
+  };
 }
 
 /** Validates the envelope and the payload against the contract. Throws ZodError on failure. */

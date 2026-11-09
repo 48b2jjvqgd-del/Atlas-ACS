@@ -80,7 +80,8 @@ describe('event contracts', () => {
     expect(new Set(types).size).toBe(types.length);
     for (const contract of eventContracts) {
       expect(contract.type).toMatch(/\.v\d+$/);
-      expect(isServiceName(contract.producer)).toBe(true);
+      expect(contract.producers.length).toBeGreaterThan(0);
+      for (const producer of contract.producers) expect(isServiceName(producer)).toBe(true);
     }
   });
 

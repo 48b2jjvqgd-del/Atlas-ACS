@@ -1,9 +1,10 @@
 # ATLAS ACS — local development environment.
 #
-#   pnpm setup:env                      # create .env with generated local passwords (once)
-#   docker compose up -d --wait         # core infrastructure only
-#   docker compose --profile services up -d --build --wait     # + migrations, all services, portal
-#   docker compose --profile identity up -d --wait             # + Keycloak
+#   pnpm setup:env                      # create/complete .env with generated local secrets
+#   docker compose up -d --wait         # core infrastructure only (PostgreSQL, Valkey, RabbitMQ, ...)
+#   docker compose --profile services up -d --build --wait     # + Keycloak, Jaeger, migrations,
+#                                                              #   all services and the portal
+#   docker compose --profile identity up -d --wait             # Keycloak only (host-run services)
 #   docker compose down                 # stop (volumes kept); add -v to delete local data
 #
 # Host ports bind to 127.0.0.1 only. Nothing here is suitable for any shared or production use.
@@ -27,15 +28,23 @@ x-service: &service
       condition: service_healthy
     rabbitmq:
       condition: service_healthy
+    keycloak:
+      condition: service_healthy
 
+# Shared by every service. Each service adds its own DATABASE_URL (its own least-privilege role)
+# and, if it calls other services, its own SERVICE_CLIENT_SECRET.
 x-service-env: &service-env
   ATLAS_ENV: ${ATLAS_ENV:-development}
   LOG_LEVEL: ${LOG_LEVEL:-info}
   LOG_PRETTY: 'false'
   HOST: 0.0.0.0
-  DATABASE_URL: postgres://${POSTGRES_USER:-atlas}:${POSTGRES_PASSWORD:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
   VALKEY_URL: redis://:${VALKEY_PASSWORD:?run pnpm setup:env}@valkey:6379/0
   RABBITMQ_URL: amqp://${RABBITMQ_USER:-atlas}:${RABBITMQ_PASSWORD:?run pnpm setup:env}@rabbitmq:5672
+  # Tokens carry the public issuer (what browsers see); services fetch keys over the back channel.
+  OIDC_ISSUER_URL: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}/realms/atlas
+  OIDC_INTERNAL_URL: http://keycloak:8080/realms/atlas
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+  ATLAS_SERVICE_URLS: api-gateway=http://api-gateway:4000,acs-core=http://acs-core:4001,protocol=http://protocol:4002,visa-adapter=http://visa-adapter:4003,mastercard-adapter=http://mastercard-adapter:4004,fraud-engine=http://fraud-engine:4005,compliance-engine=http://compliance-engine:4006,challenge-engine=http://challenge-engine:4007,issuer-service=http://issuer-service:4008,cardholder-service=http://cardholder-service:4009,identity-service=http://identity-service:4010,reporting-service=http://reporting-service:4011,audit-service=http://audit-service:4012
 
 services:
   # ---------------------------------------------------------------- infrastructure
@@ -91,6 +100,8 @@ services:
     volumes:
       - rabbitmq-data:/var/lib/rabbitmq
       - ./infrastructure/docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+      - ./infrastructure/docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-atlas.conf:ro
+      - ./infrastructure/docker/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
     healthcheck:
       test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_port_connectivity']
       interval: 10s
@@ -153,14 +164,28 @@ services:
       timeout: 3s
       retries: 10
 
+  # Identity provider. The realm import (users, clients, secrets) resolves ${...} placeholders from
+  # the environment below, so no secret is committed. Import runs only when the realm is absent:
+  # after changing atlas-realm.json, run `pnpm identity:reset`.
   keycloak:
-    profiles: [identity]
+    profiles: [identity, services]
     image: quay.io/keycloak/keycloak:26.8.0
     command: ['start-dev', '--import-realm']
     restart: unless-stopped
     environment:
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run pnpm setup:env}
+      # Browsers (and token "iss") use the public URL; services use http://keycloak:8080.
+      KC_HOSTNAME: ${KEYCLOAK_PUBLIC_URL:-http://localhost:8180}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: 'true'
+      ATLAS_PORTAL_PUBLIC_URL: ${ATLAS_PORTAL_PUBLIC_URL:-http://localhost:8080}
+      ATLAS_DEMO_PASSWORD: ${ATLAS_DEMO_PASSWORD:?run pnpm setup:env}
+      ATLAS_DEMO_TOTP_SECRET: ${ATLAS_DEMO_TOTP_SECRET:?run pnpm setup:env}
+      KEYCLOAK_CLIENT_SECRET_GATEWAY: ${KEYCLOAK_CLIENT_SECRET_GATEWAY:?run pnpm setup:env}
+      KEYCLOAK_CLIENT_SECRET_API_GATEWAY: ${KEYCLOAK_CLIENT_SECRET_API_GATEWAY:?run pnpm setup:env}
+      KEYCLOAK_CLIENT_SECRET_IDENTITY_SERVICE: ${KEYCLOAK_CLIENT_SECRET_IDENTITY_SERVICE:?run pnpm setup:env}
+      KEYCLOAK_CLIENT_SECRET_ISSUER_SERVICE: ${KEYCLOAK_CLIENT_SECRET_ISSUER_SERVICE:?run pnpm setup:env}
+      KEYCLOAK_CLIENT_SECRET_AUDIT_SERVICE: ${KEYCLOAK_CLIENT_SECRET_AUDIT_SERVICE:?run pnpm setup:env}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER:-atlas}
@@ -169,6 +194,8 @@ services:
       KC_HTTP_PORT: '8080'
     depends_on:
       postgres:
+        condition: service_healthy
+      mailpit:
         condition: service_healthy
     ports: ['127.0.0.1:8180:8080']
     volumes:
@@ -184,7 +211,18 @@ services:
       retries: 30
       start_period: 30s
 
+  # Trace backend (Apache-2.0). Receives OTLP over HTTP on 4318; UI on http://localhost:16686.
+  jaeger:
+    profiles: [services, tracing]
+    image: jaegertracing/jaeger:2.22.0
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:16686:16686'
+      - '127.0.0.1:4318:4318'
+
   # ---------------------------------------------------------------- ATLAS
+  # One-shot job: provisions per-service database roles (admin connection), then migrates as
+  # atlas_migrator and grants each service role exactly its own schema (ADR-012, ADR-025).
   migrate:
     profiles: [services]
     build:
@@ -192,10 +230,21 @@ services:
       dockerfile: infrastructure/docker/service.Dockerfile
       target: migrator
     image: atlas-acs/migrator:local
-    command: ['up']
+    command: ['bootstrap']
     environment:
       ATLAS_ENV: ${ATLAS_ENV:-development}
-      MIGRATION_DATABASE_URL: postgres://${POSTGRES_USER:-atlas}:${POSTGRES_PASSWORD:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      DATABASE_ADMIN_URL: postgres://${POSTGRES_USER:-atlas}:${POSTGRES_PASSWORD:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      MIGRATION_DATABASE_URL: postgres://atlas_migrator:${DB_PASSWORD_MIGRATOR:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      DB_PASSWORD_MIGRATOR: ${DB_PASSWORD_MIGRATOR:?run pnpm setup:env}
+      DB_PASSWORD_ACS_CORE: ${DB_PASSWORD_ACS_CORE:?run pnpm setup:env}
+      DB_PASSWORD_FRAUD_ENGINE: ${DB_PASSWORD_FRAUD_ENGINE:?run pnpm setup:env}
+      DB_PASSWORD_COMPLIANCE_ENGINE: ${DB_PASSWORD_COMPLIANCE_ENGINE:?run pnpm setup:env}
+      DB_PASSWORD_CHALLENGE_ENGINE: ${DB_PASSWORD_CHALLENGE_ENGINE:?run pnpm setup:env}
+      DB_PASSWORD_ISSUER_SERVICE: ${DB_PASSWORD_ISSUER_SERVICE:?run pnpm setup:env}
+      DB_PASSWORD_CARDHOLDER_SERVICE: ${DB_PASSWORD_CARDHOLDER_SERVICE:?run pnpm setup:env}
+      DB_PASSWORD_IDENTITY_SERVICE: ${DB_PASSWORD_IDENTITY_SERVICE:?run pnpm setup:env}
+      DB_PASSWORD_REPORTING_SERVICE: ${DB_PASSWORD_REPORTING_SERVICE:?run pnpm setup:env}
+      DB_PASSWORD_AUDIT_SERVICE: ${DB_PASSWORD_AUDIT_SERVICE:?run pnpm setup:env}
     depends_on:
       postgres:
         condition: service_healthy
@@ -214,8 +263,13 @@ services:
     environment:
       <<: *service-env
       PORT: 4000
+      SERVICE_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_API_GATEWAY:?run pnpm setup:env}
       CORS_ALLOWED_ORIGINS: http://localhost:5173,http://localhost:8080
-      ATLAS_SERVICE_URLS: api-gateway=http://127.0.0.1:4000,acs-core=http://acs-core:4001,protocol=http://protocol:4002,visa-adapter=http://visa-adapter:4003,mastercard-adapter=http://mastercard-adapter:4004,fraud-engine=http://fraud-engine:4005,compliance-engine=http://compliance-engine:4006,challenge-engine=http://challenge-engine:4007,issuer-service=http://issuer-service:4008,cardholder-service=http://cardholder-service:4009,identity-service=http://identity-service:4010,reporting-service=http://reporting-service:4011,audit-service=http://audit-service:4012
+      PORTAL_PUBLIC_URL: ${ATLAS_PORTAL_PUBLIC_URL:-http://localhost:8080}
+      OIDC_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_GATEWAY:?run pnpm setup:env}
+      SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:?run pnpm setup:env}
+      # The portal's nginx is the only proxy in front of the gateway.
+      TRUSTED_PROXY_ADDRESSES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     ports: ['127.0.0.1:4000:4000']
 
   acs-core:
@@ -228,7 +282,10 @@ services:
         args: { SERVICE: acs-core },
       }
     image: atlas-acs/acs-core:local
-    environment: { <<: *service-env, PORT: 4001 }
+    environment:
+      <<: *service-env
+      PORT: 4001
+      DATABASE_URL: postgres://atlas_acs_core:${DB_PASSWORD_ACS_CORE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4001:4001']
 
   protocol:
@@ -241,7 +298,9 @@ services:
         args: { SERVICE: protocol },
       }
     image: atlas-acs/protocol:local
-    environment: { <<: *service-env, PORT: 4002 }
+    environment:
+      <<: *service-env
+      PORT: 4002
     ports: ['127.0.0.1:4002:4002']
 
   visa-adapter:
@@ -254,7 +313,9 @@ services:
         args: { SERVICE: visa-adapter },
       }
     image: atlas-acs/visa-adapter:local
-    environment: { <<: *service-env, PORT: 4003 }
+    environment:
+      <<: *service-env
+      PORT: 4003
     ports: ['127.0.0.1:4003:4003']
 
   mastercard-adapter:
@@ -267,7 +328,9 @@ services:
         args: { SERVICE: mastercard-adapter },
       }
     image: atlas-acs/mastercard-adapter:local
-    environment: { <<: *service-env, PORT: 4004 }
+    environment:
+      <<: *service-env
+      PORT: 4004
     ports: ['127.0.0.1:4004:4004']
 
   fraud-engine:
@@ -280,7 +343,10 @@ services:
         args: { SERVICE: fraud-engine },
       }
     image: atlas-acs/fraud-engine:local
-    environment: { <<: *service-env, PORT: 4005 }
+    environment:
+      <<: *service-env
+      PORT: 4005
+      DATABASE_URL: postgres://atlas_fraud_engine:${DB_PASSWORD_FRAUD_ENGINE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4005:4005']
 
   compliance-engine:
@@ -293,7 +359,10 @@ services:
         args: { SERVICE: compliance-engine },
       }
     image: atlas-acs/compliance-engine:local
-    environment: { <<: *service-env, PORT: 4006 }
+    environment:
+      <<: *service-env
+      PORT: 4006
+      DATABASE_URL: postgres://atlas_compliance_engine:${DB_PASSWORD_COMPLIANCE_ENGINE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4006:4006']
 
   challenge-engine:
@@ -306,7 +375,10 @@ services:
         args: { SERVICE: challenge-engine },
       }
     image: atlas-acs/challenge-engine:local
-    environment: { <<: *service-env, PORT: 4007 }
+    environment:
+      <<: *service-env
+      PORT: 4007
+      DATABASE_URL: postgres://atlas_challenge_engine:${DB_PASSWORD_CHALLENGE_ENGINE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4007:4007']
 
   issuer-service:
@@ -319,7 +391,11 @@ services:
         args: { SERVICE: issuer-service },
       }
     image: atlas-acs/issuer-service:local
-    environment: { <<: *service-env, PORT: 4008 }
+    environment:
+      <<: *service-env
+      PORT: 4008
+      DATABASE_URL: postgres://atlas_issuer_service:${DB_PASSWORD_ISSUER_SERVICE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      SERVICE_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_ISSUER_SERVICE:?run pnpm setup:env}
     ports: ['127.0.0.1:4008:4008']
 
   cardholder-service:
@@ -332,7 +408,10 @@ services:
         args: { SERVICE: cardholder-service },
       }
     image: atlas-acs/cardholder-service:local
-    environment: { <<: *service-env, PORT: 4009 }
+    environment:
+      <<: *service-env
+      PORT: 4009
+      DATABASE_URL: postgres://atlas_cardholder_service:${DB_PASSWORD_CARDHOLDER_SERVICE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4009:4009']
 
   identity-service:
@@ -345,7 +424,11 @@ services:
         args: { SERVICE: identity-service },
       }
     image: atlas-acs/identity-service:local
-    environment: { <<: *service-env, PORT: 4010 }
+    environment:
+      <<: *service-env
+      PORT: 4010
+      DATABASE_URL: postgres://atlas_identity_service:${DB_PASSWORD_IDENTITY_SERVICE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      SERVICE_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_IDENTITY_SERVICE:?run pnpm setup:env}
     ports: ['127.0.0.1:4010:4010']
 
   reporting-service:
@@ -358,7 +441,10 @@ services:
         args: { SERVICE: reporting-service },
       }
     image: atlas-acs/reporting-service:local
-    environment: { <<: *service-env, PORT: 4011 }
+    environment:
+      <<: *service-env
+      PORT: 4011
+      DATABASE_URL: postgres://atlas_reporting_service:${DB_PASSWORD_REPORTING_SERVICE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
     ports: ['127.0.0.1:4011:4011']
 
   audit-service:
@@ -371,7 +457,11 @@ services:
         args: { SERVICE: audit-service },
       }
     image: atlas-acs/audit-service:local
-    environment: { <<: *service-env, PORT: 4012 }
+    environment:
+      <<: *service-env
+      PORT: 4012
+      DATABASE_URL: postgres://atlas_audit_service:${DB_PASSWORD_AUDIT_SERVICE:?run pnpm setup:env}@postgres:5432/${POSTGRES_DB:-atlas}
+      SERVICE_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_AUDIT_SERVICE:?run pnpm setup:env}
     ports: ['127.0.0.1:4012:4012']
 
   portal:

@@ -1,6 +1,7 @@
 import { serviceCatalog, type ServiceName } from '@atlas/contracts';
 import {
   booleanStringSchema,
+  commaListSchema,
   logLevelSchema,
   portSchema,
   positiveIntSchema,
@@ -10,17 +11,47 @@ import {
 import { resolveSecrets } from '@atlas/security';
 import { atlasEnvironments, ConfigurationError } from '@atlas/shared';
 
+import { resolveServiceUrls } from './service-urls.js';
+
 export type InfrastructureDependency = 'postgres' | 'valkey' | 'rabbitmq';
 
 /** Environment variables that may carry credentials. Each also accepts a NAME_FILE variant. */
-export const secretEnvironmentKeys = ['DATABASE_URL', 'VALKEY_URL', 'RABBITMQ_URL'] as const;
+export const secretEnvironmentKeys = [
+  'DATABASE_URL',
+  'VALKEY_URL',
+  'RABBITMQ_URL',
+  'SERVICE_CLIENT_SECRET',
+  'OIDC_CLIENT_SECRET',
+  'SESSION_ENCRYPTION_KEY',
+] as const;
 
-const dependencyUrlKeys: Record<InfrastructureDependency, (typeof secretEnvironmentKeys)[number]> =
-  {
-    postgres: 'DATABASE_URL',
-    valkey: 'VALKEY_URL',
-    rabbitmq: 'RABBITMQ_URL',
-  };
+/**
+ * Security needs a service declares (Stage 1A). They drive which settings are required:
+ *  - verifyTokens: the service authenticates callers → OIDC_ISSUER_URL is required.
+ *  - calls: services it calls → OIDC_ISSUER_URL and SERVICE_CLIENT_SECRET are required.
+ */
+export interface SecurityRequirements {
+  verifyTokens?: boolean;
+  calls?: readonly ServiceName[];
+}
+
+/**
+ * A service-specific connection URL, e.g. ISSUER_SERVICE_DATABASE_URL, takes precedence over
+ * DATABASE_URL. This lets one .env serve every service on a developer machine while each service
+ * still connects with its own least-privilege database role.
+ */
+export function serviceEnvironmentPrefix(service: ServiceName): string {
+  return service.replaceAll('-', '_').toUpperCase();
+}
+
+const dependencyUrlKeys: Record<
+  InfrastructureDependency,
+  'DATABASE_URL' | 'VALKEY_URL' | 'RABBITMQ_URL'
+> = {
+  postgres: 'DATABASE_URL',
+  valkey: 'VALKEY_URL',
+  rabbitmq: 'RABBITMQ_URL',
+};
 
 const dependencyUrlSchemas = {
   DATABASE_URL: urlWithProtocols(['postgres:', 'postgresql:']),
@@ -44,6 +75,30 @@ export function baseConfigShape(defaultPort: number) {
       .regex(/^[0-9a-f]{7,40}$/)
       .optional(),
     OTEL_EXPORTER_OTLP_ENDPOINT: z.url().optional(),
+    /** Service address book ("name=url,..."); defaults to local ports. */
+    ATLAS_SERVICE_URLS: z
+      .string()
+      .optional()
+      .transform((value, context) => {
+        try {
+          return resolveServiceUrls(value);
+        } catch (error) {
+          context.addIssue({ code: 'custom', message: (error as Error).message });
+          return z.NEVER;
+        }
+      }),
+    /** Public issuer URL of the OIDC provider: the expected "iss" claim. */
+    OIDC_ISSUER_URL: z.url().optional(),
+    /** Back-channel base URL of the same issuer (e.g. inside Docker); defaults to OIDC_ISSUER_URL. */
+    OIDC_INTERNAL_URL: z.url().optional(),
+    /** Platform-wide permissions require a second factor at sign-in. */
+    PLATFORM_MFA_REQUIRED: booleanStringSchema.default(true),
+    SERVICE_CALL_TIMEOUT_MS: positiveIntSchema.default(3_000),
+    /**
+     * Reverse proxies (addresses or CIDRs) whose X-Forwarded-For is trusted, e.g. the portal's
+     * nginx. Unset: the TCP peer is the client (Stage 0 behaviour).
+     */
+    TRUSTED_PROXY_ADDRESSES: commaListSchema.optional(),
   };
 }
 
@@ -51,6 +106,7 @@ export type BaseConfig = z.infer<z.ZodObject<ReturnType<typeof baseConfigShape>>
   DATABASE_URL?: string;
   VALKEY_URL?: string;
   RABBITMQ_URL?: string;
+  SERVICE_CLIENT_SECRET?: string;
 };
 
 /**
@@ -67,10 +123,24 @@ export function loadServiceConfig<TShape extends z.ZodRawShape>(
   dependencies: readonly InfrastructureDependency[],
   extraShape: TShape,
   env: Readonly<Record<string, string | undefined>>,
+  security: SecurityRequirements = {},
 ): BaseConfig & z.infer<z.ZodObject<TShape>> {
-  const cleaned = Object.fromEntries(
-    Object.entries(env).filter(([, value]) => value !== undefined && value !== ''),
+  const cleaned: Record<string, string> = Object.fromEntries(
+    Object.entries(env).filter(
+      (entry): entry is [string, string] => entry[1] !== undefined && entry[1] !== '',
+    ),
   );
+  const prefix = serviceEnvironmentPrefix(service);
+  for (const key of ['DATABASE_URL', 'SERVICE_CLIENT_SECRET'] as const) {
+    for (const suffix of ['', '_FILE']) {
+      const specific = cleaned[`${prefix}_${key}${suffix}`];
+      if (specific !== undefined) {
+        delete cleaned[`${key}`];
+        delete cleaned[`${key}_FILE`];
+        cleaned[`${key}${suffix}`] = specific;
+      }
+    }
+  }
 
   let resolved: Record<string, string | undefined>;
   try {
@@ -86,6 +156,10 @@ export function loadServiceConfig<TShape extends z.ZodRawShape>(
     const key = dependencyUrlKeys[dependency];
     dependencyShape[key] = dependencyUrlSchemas[key];
   }
+
+  const callsServices = (security.calls?.length ?? 0) > 0;
+  if (security.verifyTokens || callsServices) dependencyShape.OIDC_ISSUER_URL = z.url();
+  if (callsServices) dependencyShape.SERVICE_CLIENT_SECRET = z.string().min(16);
 
   const schema = z.object({
     ...baseConfigShape(serviceCatalog[service].port),

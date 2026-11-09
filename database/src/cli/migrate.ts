@@ -1,17 +1,34 @@
 /**
  * Usage:
+ *   migrate provision-roles                            create/update database roles (admin URL)
+ *   migrate bootstrap                                  provision-roles, then up (local / CI)
  *   migrate up     [--owner <schema>] [--count <n>]
  *   migrate down    --owner <schema>  [--count <n>]   (default count 1)
  *   migrate status
  */
 import { migrate, migrationStatus } from '../migrate.js';
-import { atlasEnvironment, flag, migrationDatabaseUrl } from './env.js';
+import { provisionDatabaseRoles } from '../roles.js';
+import {
+  adminDatabaseUrl,
+  atlasEnvironment,
+  flag,
+  migrationDatabaseUrl,
+  rolePasswords,
+} from './env.js';
 
-const [command = 'status', ...args] = process.argv.slice(2);
+const [requested = 'status', ...args] = process.argv.slice(2);
 
 try {
-  const databaseUrl = migrationDatabaseUrl();
   const environment = atlasEnvironment();
+  if (requested === 'provision-roles' || requested === 'bootstrap') {
+    await provisionDatabaseRoles({
+      adminUrl: adminDatabaseUrl(),
+      ...rolePasswords(),
+      log: (message) => console.log(message),
+    });
+  }
+  const command = requested === 'bootstrap' ? 'up' : requested;
+  const databaseUrl = command === 'provision-roles' ? '' : migrationDatabaseUrl();
   const owner = flag(args, 'owner');
   const countValue = flag(args, 'count');
   const count = countValue === undefined ? undefined : Number.parseInt(countValue, 10);
@@ -33,12 +50,17 @@ try {
       direction: command,
       ...(owner ? { owner } : {}),
       ...(count ? { count } : {}),
+      log: (message) => {
+        if (message.startsWith('granted')) console.log(message);
+      },
     });
     for (const [schema, ran] of Object.entries(results)) {
       console.log(
         `${schema}: ${ran.length === 0 ? 'nothing to do' : `${command} ${ran.map((m) => m.name).join(', ')}`}`,
       );
     }
+  } else if (command === 'provision-roles') {
+    // Done above.
   } else if (command === 'status') {
     for (const status of await migrationStatus(databaseUrl)) {
       console.log(
@@ -47,7 +69,9 @@ try {
       for (const name of status.pending) console.log(`  pending  ${name}`);
     }
   } else {
-    throw new Error(`Unknown command "${command}". Use up, down or status.`);
+    throw new Error(
+      `Unknown command "${command}". Use provision-roles, bootstrap, up, down or status.`,
+    );
   }
 } catch (error) {
   console.error(`migrate: ${(error as Error).message}`);

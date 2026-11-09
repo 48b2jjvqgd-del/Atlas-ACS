@@ -20,9 +20,18 @@
   },
   "dependencies": {
     "@atlas/contracts": "workspace:*",
-    "@atlas/service-kit": "workspace:*"
+    "@atlas/observability": "workspace:*",
+    "@atlas/schemas": "workspace:*",
+    "@atlas/service-kit": "workspace:*",
+    "@atlas/shared": "workspace:*",
+    "fastify": "^5.12.8",
+    "pg": "^8.23.1"
   },
   "files": [
     "dist"
-  ]
+  ],
+  "devDependencies": {
+    "@types/pg": "^8.23.1",
+    "jose": "^6.2.13"
+  }
 }

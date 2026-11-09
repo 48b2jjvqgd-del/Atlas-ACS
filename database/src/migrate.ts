@@ -1,9 +1,11 @@
 import { readdirSync } from 'node:fs';
 import { runner } from 'node-pg-migrate';
 import pg from 'pg';
+import { MIGRATIONS_TABLE } from './constants.js';
 import { discoverMigrationOwners, type MigrationOwner } from './owners.js';
+import { applyServiceGrants } from './roles.js';
 
-export const MIGRATIONS_TABLE = 'pgmigrations';
+export { MIGRATIONS_TABLE };
 
 type RunMigration = Awaited<ReturnType<typeof runner>>[number];
 
@@ -14,6 +16,8 @@ export interface MigrateOptions {
   owner?: string;
   /** Number of migrations to apply/revert. Default: all for up, 1 for down. */
   count?: number;
+  /** Re-apply per-service grants afterwards (default true). See roles.ts. */
+  grants?: boolean;
   log?: (message: string) => void;
 }
 
@@ -54,6 +58,15 @@ export async function migrate(options: MigrateOptions): Promise<Record<string, R
       log: options.log ?? (() => undefined),
       verbose: false,
     });
+  }
+  if (options.grants ?? true) {
+    const client = new pg.Client({ connectionString: options.databaseUrl });
+    await client.connect();
+    try {
+      await applyServiceGrants(client, options.log);
+    } finally {
+      await client.end();
+    }
   }
   return results;
 }

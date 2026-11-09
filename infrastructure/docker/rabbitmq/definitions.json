@@ -1,0 +1,42 @@
+{
+  "exchanges": [
+    {
+      "name": "atlas.events.unrouted",
+      "vhost": "/",
+      "type": "fanout",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "atlas.events.unrouted",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": { "x-queue-type": "quorum" }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "atlas.events.unrouted",
+      "vhost": "/",
+      "destination": "atlas.events.unrouted",
+      "destination_type": "queue",
+      "routing_key": "",
+      "arguments": {}
+    }
+  ],
+  "policies": [
+    {
+      "vhost": "/",
+      "name": "atlas-events-alternate-exchange",
+      "pattern": "^atlas\\.events$",
+      "apply-to": "exchanges",
+      "priority": 0,
+      "definition": { "alternate-exchange": "atlas.events.unrouted" }
+    }
+  ]
+}
