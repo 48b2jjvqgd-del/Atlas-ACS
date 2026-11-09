@@ -54,7 +54,7 @@ No component depends on a particular cloud provider.
 | Database, Valkey, RabbitMQ credentials      | Generated into `.env` by `pnpm setup:env` | Secret manager, mounted as files: `DATABASE_URL_FILE`, `VALKEY_URL_FILE`, `RABBITMQ_URL_FILE`, `MIGRATION_DATABASE_URL_FILE` |
 | Grafana / Keycloak admin passwords          | `.env`                                    | Not migrated — company tools replace them                                                                                    |
 | OIDC client configuration (Stage 1A)        | Keycloak realm import                     | Company IdP registration                                                                                                     |
-| Service-to-service credentials (Stage 1A/6) | Local Keycloak clients / dev CA           | Company PKI and token issuer                                                                                                 |
+| Service-to-service credentials (Stage 1A/7) | Local Keycloak clients / dev CA           | Company PKI and token issuer                                                                                                 |
 | Cryptographic keys (Stage 1B+)              | Software keys, **simulation only**        | HSM-held keys, generated in the target environment. **No key material ever moves from the independent environment.**         |
 
 All local credentials are disposable; none are reused anywhere else.

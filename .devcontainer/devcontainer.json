@@ -1,0 +1,49 @@
+// GitHub Codespaces / VS Code Dev Container for ATLAS ACS local development.
+// Applies when a Codespace is created or rebuilt; existing Codespaces are unaffected until rebuilt.
+// Versions are pinned exactly (ADR-020): image by digest (typescript-node 4-24-bookworm, Node 24),
+// docker-in-docker feature by full version.
+{
+  "name": "ATLAS ACS",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node@sha256:cfb41999420f9f05aae60a3a02d016867936d6fdd49dfff7de3940a2dac2242a",
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:4.1.3": {}
+  },
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "8gb",
+    "storage": "32gb"
+  },
+  // Installs the pinned pnpm, dependencies, and a local .env with generated local-only credentials.
+  // Infrastructure is not started automatically: run `pnpm infra:up` or `pnpm stack:up` when needed.
+  "postCreateCommand": "npm install --global --no-fund --no-audit pnpm@12.16.1 && pnpm install --frozen-lockfile && pnpm setup:env",
+  "forwardPorts": [8080, 5173, 4000, 3000, 9090, 15672, 8025, 8180],
+  "portsAttributes": {
+    "8080": { "label": "Portal (containers)", "onAutoForward": "notify" },
+    "5173": { "label": "Portal (Vite dev)", "onAutoForward": "notify" },
+    "4000": { "label": "API gateway", "onAutoForward": "silent" },
+    "3000": { "label": "Grafana", "onAutoForward": "silent" },
+    "9090": { "label": "Prometheus", "onAutoForward": "silent" },
+    "15672": { "label": "RabbitMQ management", "onAutoForward": "silent" },
+    "8025": { "label": "Mailpit", "onAutoForward": "silent" },
+    "8180": { "label": "Keycloak", "onAutoForward": "silent" },
+    "4173": { "label": "Portal (Vite preview / E2E)", "onAutoForward": "silent" },
+    "4001-4012": { "label": "ATLAS services", "onAutoForward": "silent" },
+    // Data stores and the message broker are reached from inside the Codespace only.
+    "5432": { "label": "PostgreSQL", "onAutoForward": "ignore" },
+    "6379": { "label": "Valkey", "onAutoForward": "ignore" },
+    "5672": { "label": "RabbitMQ AMQP", "onAutoForward": "ignore" },
+    "1025": { "label": "Mailpit SMTP", "onAutoForward": "ignore" }
+  },
+  "otherPortsAttributes": { "onAutoForward": "silent" },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode",
+        "bradlc.vscode-tailwindcss",
+        "ms-playwright.playwright",
+        "vitest.explorer"
+      ]
+    }
+  }
+}

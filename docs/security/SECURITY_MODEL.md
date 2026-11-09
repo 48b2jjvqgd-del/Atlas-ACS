@@ -57,7 +57,7 @@ track data, expiry dates, authentication values, ephemeral keys, or full request
 Log identifiers (transaction ID, tenant ID, correlation ID) and outcomes instead. The redaction list is in
 [`redaction.ts`](../../packages/security/src/redaction.ts); additions are welcome, removals need review.
 
-## Service-to-service authentication — _Design (Stage 1A / Stage 6)_
+## Service-to-service authentication — _Design (Stage 1A / Stage 7)_
 
 Stage 0 has none: services trust their network. `x-atlas-caller` is identification only.
 
@@ -114,14 +114,14 @@ while every other environment runs with both enforced.
 
 | Area                             | Requirement                                                                                                                                                                                                                   | Stage                |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
-| **HSM integration**              | Authentication-value generation and signing keys held in an HSM; a provider interface (PKCS#11 or vendor API) with a software implementation for simulation only; no key material in application memory longer than necessary | 6                    |
-| **Key management**               | Key hierarchy, generation, rotation, revocation and destruction procedures; dual control and split knowledge where required; key inventory                                                                                    | 6                    |
-| **Certificate lifecycle**        | Inventory of DS, TLS and signing certificates; automated renewal; expiry monitoring and alerting; revocation handling                                                                                                         | 6                    |
-| **Mutual TLS**                   | Between services (above) and with scheme directory servers per scheme requirements [research]                                                                                                                                 | 6                    |
-| **PCI DSS / PCI 3DS assessment** | Scoping, segmentation, gap assessment, remediation and formal assessment by a QSA before any production use                                                                                                                   | 6–7                  |
+| **HSM integration**              | Authentication-value generation and signing keys held in an HSM; a provider interface (PKCS#11 or vendor API) with a software implementation for simulation only; no key material in application memory longer than necessary | 7                    |
+| **Key management**               | Key hierarchy, generation, rotation, revocation and destruction procedures; dual control and split knowledge where required; key inventory                                                                                    | 7                    |
+| **Certificate lifecycle**        | Inventory of DS, TLS and signing certificates; automated renewal; expiry monitoring and alerting; revocation handling                                                                                                         | 7                    |
+| **Mutual TLS**                   | Between services (above) and with scheme directory servers per scheme requirements [research]                                                                                                                                 | 7                    |
+| **PCI DSS / PCI 3DS assessment** | Scoping, segmentation, gap assessment, remediation and formal assessment by a QSA before any production use                                                                                                                   | 7                    |
 | **Data retention**               | Retention period per data class and table, aligned with scheme rules, regulation and issuer contracts; automated deletion/partition drop; legal hold                                                                          | 5                    |
 | **GDPR / UK GDPR**               | Records of processing, lawful basis (issuer as controller, ATLAS operator as processor — to be confirmed), DPIA, data-subject rights tooling, international transfer assessment, breach procedures                            | 5–7                  |
-| **Secrets management**           | Integration with an enterprise secret store via `*_FILE` or a provider; rotation without restart                                                                                                                              | 6                    |
+| **Secrets management**           | Integration with an enterprise secret store via `*_FILE` or a provider; rotation without restart                                                                                                                              | 7                    |
 | **Security testing**             | SAST, dependency and container scanning in CI; threat modelling per stage; external penetration test                                                                                                                          | 1A+ (incremental), 7 |
 | **Session security**             | OIDC authorisation code + PKCE, secure cookies or BFF pattern, CSRF protection, idle/absolute timeouts, MFA for platform administrators                                                                                       | 1A                   |
 

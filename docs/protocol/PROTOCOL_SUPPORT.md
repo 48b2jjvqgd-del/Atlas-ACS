@@ -54,8 +54,8 @@ is configuration and schema work, not a redesign.
 | Challenge flow — app     | Native UI types (text, single/multi-select, OOB, HTML other) [verify] with encrypted CReq/CRes          | 3                                           |
 | Decoupled authentication | Out-of-band, asynchronous result via RReq                                                               | 3                                           |
 | 3RI                      | Requestor-initiated, non-cardholder-present                                                             | 4                                           |
-| Authentication value     | CAVV (Visa) / AAV-SPA (Mastercard) generation in scheme adapters; ECI mapping [verify values]           | 1B (simulated keys), 6 (HSM)                |
-| Cryptography             | ACS signed content (JWS) and app-channel key agreement / encryption (JWE) [verify algorithms]           | 3 (software keys, simulation only), 6 (HSM) |
+| Authentication value     | CAVV (Visa) / AAV-SPA (Mastercard) generation in scheme adapters; ECI mapping [verify values]           | 1B (simulated keys), 7 (HSM)                |
+| Cryptography             | ACS signed content (JWS) and app-channel key agreement / encryption (JWE) [verify algorithms]           | 3 (software keys, simulation only), 7 (HSM) |
 | Message extensions       | Scheme- and region-specific extensions handled by adapters                                              | 1B+                                         |
 
 ## Scheme-specific behaviour

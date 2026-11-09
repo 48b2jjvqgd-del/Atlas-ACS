@@ -5,34 +5,35 @@ Decision log in lightweight ADR form.
 - **Confirmed** — agreed before Stage 0.
 - **Accepted** — proposed during Stage 0 and approved by the project owner at the Stage 0 review
   (2026-11-08).
-- **Accepted (general approval)** — covered by the owner's approval of the overall Stage 0 architecture
-  and implementation, but not individually named in that review.
-- **Proposed** — awaiting the owner's decision.
+- **Accepted (general approval)** — approved by the owner as general architectural decisions at the
+  Stage 0 final review (2026-11-08); documentation and rationale retained.
+- **Proposed** — awaiting the owner's decision. _None outstanding._
 
-| ADR | Decision                                                               | Status                                               |
-| --- | ---------------------------------------------------------------------- | ---------------------------------------------------- |
-| 001 | Greenfield Visa and Mastercard integration                             | Confirmed                                            |
-| 002 | Independent microservices from the beginning                           | Confirmed                                            |
-| 003 | One combined portal for platform and issuer users                      | Confirmed                                            |
-| 004 | Backend-enforced tenant isolation and granular permissions             | Confirmed                                            |
-| 005 | Open-source-first technology                                           | Confirmed                                            |
-| 006 | Docker-based local development                                         | Confirmed                                            |
-| 007 | Portability between independent and company environments               | Confirmed                                            |
-| 008 | Versioned database migrations and API contracts                        | Confirmed                                            |
-| 009 | Comprehensive automated testing                                        | Confirmed                                            |
-| 010 | A working simulation environment, not a static demo                    | Confirmed                                            |
-| 011 | Retain TypeScript 6                                                    | Accepted                                             |
-| 012 | Schema per service in one PostgreSQL instance, with a credentials gate | Accepted (with condition)                            |
-| 013 | Plain-SQL migrations with per-owner history                            | Accepted (general approval)                          |
-| 014 | RFC 9457 problem details and a `data`/`meta` envelope                  | Accepted (general approval)                          |
-| 015 | CloudEvents envelope over a RabbitMQ topic exchange                    | Accepted (general approval)                          |
-| 016 | Additional `packages/service-kit` and `tests/smoke`                    | Accepted                                             |
-| 017 | One parameterised Dockerfile; Compose file at repository root          | Accepted                                             |
-| 018 | `@prometheus-io/client` instead of `prom-client`                       | Accepted (verified)                                  |
-| 019 | Valkey instead of Redis                                                | Accepted — implemented                               |
-| 020 | Dependency maturity and supply-chain policy                            | Accepted, plus a proposed security-release exception |
-| 021 | Documentation file locations                                           | Accepted                                             |
-| 022 | Stage resequencing: 1A and 1B                                          | Accepted; renumbering of later stages proposed       |
+| ADR | Decision                                                                     | Status                             |
+| --- | ---------------------------------------------------------------------------- | ---------------------------------- |
+| 001 | Greenfield Visa and Mastercard integration                                   | Confirmed                          |
+| 002 | Independent microservices from the beginning                                 | Confirmed                          |
+| 003 | One combined portal for platform and issuer users                            | Confirmed                          |
+| 004 | Backend-enforced tenant isolation and granular permissions                   | Confirmed                          |
+| 005 | Open-source-first technology                                                 | Confirmed                          |
+| 006 | Docker-based local development                                               | Confirmed                          |
+| 007 | Portability between independent and company environments                     | Confirmed                          |
+| 008 | Versioned database migrations and API contracts                              | Confirmed                          |
+| 009 | Comprehensive automated testing                                              | Confirmed                          |
+| 010 | A working simulation environment, not a static demo                          | Confirmed                          |
+| 011 | Retain TypeScript 6                                                          | Accepted                           |
+| 012 | Schema per service in one PostgreSQL instance, with a credentials gate       | Accepted (with condition)          |
+| 013 | Plain-SQL migrations with per-owner history                                  | Accepted (general approval)        |
+| 014 | RFC 9457 problem details and a `data`/`meta` envelope                        | Accepted (general approval)        |
+| 015 | CloudEvents envelope over a RabbitMQ topic exchange                          | Accepted (general approval)        |
+| 016 | Additional `packages/service-kit` and `tests/smoke`                          | Accepted                           |
+| 017 | One parameterised Dockerfile; Compose file at repository root                | Accepted                           |
+| 018 | `@prometheus-io/client` instead of `prom-client`                             | Accepted (verified)                |
+| 019 | Valkey instead of Redis                                                      | Accepted — implemented             |
+| 020 | Dependency maturity and supply-chain policy, with security-release exception | Accepted                           |
+| 021 | Documentation file locations                                                 | Accepted                           |
+| 022 | Final stage structure (1A, 1B, 2–7)                                          | Accepted (owner's final structure) |
+| 023 | GitHub Codespaces development configuration                                  | Accepted                           |
 
 ---
 
@@ -187,25 +188,80 @@ old; pnpm's minimum-release-age policy enforces this for npm. Deny dependency in
 explicit allow-list. Fail CI on high or critical advisories. Run Dependabot for npm, Actions, Docker and
 Compose. Accepted moderate advisories are recorded in SECURITY_MODEL.md.
 
-**Proposed exception (needs the owner's confirmation): security releases.** A release that fixes a
-published vulnerability may be adopted before it is two weeks old, recording the advisory as
-justification. **Applied once:** Valkey 9.1.3, published 2026-10-26 (13 days old when adopted), is a
-security release fixing GHSA-f4q9-j22m-xqq9 (heap buffer overflow). Pinning the older 9.1.2 would
-have deliberately deployed a known-vulnerable version.
+**Security-release exception — _Accepted at the Stage 0 final review_.** A release that fixes a
+security vulnerability may be adopted before it reaches the two-week age threshold, provided all of the
+following are met and recorded:
+
+1. **Verified upstream security advisory**: the advisory is confirmed at the upstream project's
+   official source, not only in release notes or third-party reports.
+2. **Exact version pinning**: the patched version is pinned exactly, never as a range or a floating tag.
+3. **Recorded justification**: an entry in the register below names the advisory, its severity, the
+   affected and fixed versions, and why waiting would be worse.
+4. **Full relevant automated testing**: every automated suite that exercises the component passes on the
+   patched version.
+5. **Documented approval**: the project owner's approval is recorded in the register.
+
+Register of exceptions:
+
+| Component                             | Version          | Age when adopted               | Advisory (verified upstream)                                                                                                                                                          | Severity | Affected → fixed     | Justification                                                                                                                                                                                                                                       | Testing                                                                                                                          | Approval                                        |
+| ------------------------------------- | ---------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | -------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Valkey (`valkey/valkey:9.1.3-alpine`) | 9.1.3, exact tag | 13 days (published 2026-10-26) | GHSA-f4q9-j22m-xqq9, confirmed in the `valkey-io/valkey` repository security advisory (published 2026-10-26). Not yet listed in the GitHub global advisory database at time of check. | High     | `<= 9.1.2` → `9.1.3` | Heap buffer overflow in cluster Pub/Sub message construction that could allow an authenticated client to execute code. ATLAS runs Valkey standalone (not cluster), so exposure is low, but adopting 9.1.2 would knowingly pin a vulnerable release. | Unit, smoke, integration (Valkey connectivity, authentication failure, key-prefix isolation, readiness), E2E, full Compose stack | Project owner, Stage 0 final review, 2026-11-08 |
 
 ### ADR-021 Documentation file locations — _Accepted_
 
 The brief's named documents live in the matching `docs/` subfolders. `PROJECT_OVERVIEW.md`,
 `DEVELOPMENT.md` and `MIGRATION_STRATEGY.md` are at the `docs/` root, and `CONVENTIONS.md` has been added.
 
-### ADR-022 Stage resequencing — _Accepted; later renumbering proposed_
+### ADR-022 Final stage structure — _Accepted_
 
-**Decision (owner).** The next stages are **1A — Platform security and issuer foundations** and
-**1B — ACS protocol foundation**, covering simulated Visa and Mastercard Directory Servers and AReq/ARes
-processing. Neither stage has started.
+**Decision (owner, Stage 0 final review).** The roadmap is:
 
-**Consequence (proposed, needs confirmation).** 1A takes the former Stage 1 plus the owner's additional
-security requirements. 1B absorbs the former Stages 2 and 3. The remaining stages are renumbered
-4→2, 5→3, 6→4, 7→5, 8→6, 9→7 so there are no gaps. The portal placeholders, compliance matrix,
-protocol, security and migration documents have been updated to match. See
-[ROADMAP.md](../roadmap/ROADMAP.md).
+| Stage | Name                                                                               |
+| ----- | ---------------------------------------------------------------------------------- |
+| 1A    | Platform security and issuer foundations (includes issuer administration and RBAC) |
+| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity              |
+| 2     | Fraud and decision engine                                                          |
+| 3     | Challenge engine                                                                   |
+| 4     | Compliance engine                                                                  |
+| 5     | Reporting and analytics                                                            |
+| 6     | Demonstration and performance testing                                              |
+| 7     | Migration, authorised scheme integration and certification                         |
+
+Fraud/decisioning and challenge implementation are **not** absorbed into Stage 1B; each stage keeps its
+own acceptance criteria. Neither 1A nor 1B has started.
+
+**Consequences.**
+
+- Stage 1B processes AReq → ARes with an explicit, deterministic simulation outcome policy. Real risk
+  decisioning arrives in Stage 2.
+- The production security hardening previously scheduled as its own stage (HSM, key management,
+  certificate lifecycle, mutual TLS, PCI assessment) is placed in **Stage 7**, alongside migration and
+  certification, where production keys, scheme connectivity and a target environment exist.
+  Service-to-service authentication (tokens) and the mTLS design remain in Stage 1A.
+- **Approval condition (owner, 2026-11-08).** Stage 7 holds only production-specific security
+  hardening. All foundational security controls are implemented in **Stage 1A**, and protocol security
+  controls in **Stage 1B**; neither may be deferred to Stage 7.
+- Performance testing, previously part of the protocol and production stages, is placed in **Stage 6**.
+- Portal placeholders, the compliance matrix, and the protocol, security and migration documents are
+  updated to match. See [ROADMAP.md](../roadmap/ROADMAP.md).
+
+### ADR-023 GitHub Codespaces development configuration — _Accepted_
+
+**Decision (owner request).** Add `.devcontainer/devcontainer.json`:
+
+- Node 24 dev container image, pinned by digest; Docker-in-Docker feature pinned at 4.1.3.
+- `postCreateCommand` installs pnpm 12.16.1, installs dependencies (frozen lockfile) and creates a local
+  `.env`. Infrastructure is not started automatically.
+- Labelled port forwarding for the portal, gateway and tools. Data-store and broker ports
+  (PostgreSQL, Valkey, AMQP, SMTP) are not auto-forwarded. Forwarded ports remain private (the
+  Codespaces default).
+
+The Vite dev and preview servers additionally allow the Codespaces forwarding domain, and only when
+running inside a Codespace (`CODESPACES=true`), so the portal is reachable through port forwarding while
+host-header protection stays in place everywhere else.
+
+**Restart policies (owner request, after the final review).** Every long-running Compose container now
+uses `restart: unless-stopped`: infrastructure (PostgreSQL, Valkey, RabbitMQ, Keycloak, Mailpit,
+Prometheus, Grafana), the portal and all services. So the stack comes back on its own after a
+Codespace or Docker restart. Containers you stop deliberately (`docker compose stop`, `pnpm stack:down`)
+stay stopped. The one-off `migrate` job keeps `restart: 'no'`. No other infrastructure was changed.
