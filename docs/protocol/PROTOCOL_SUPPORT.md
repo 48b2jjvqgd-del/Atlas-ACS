@@ -54,8 +54,8 @@ is configuration and schema work, not a redesign.
 | Challenge flow — app     | Native UI types (text, single/multi-select, OOB, HTML other) [verify] with encrypted CReq/CRes          | 3                                           |
 | Decoupled authentication | Out-of-band, asynchronous result via RReq                                                               | 3                                           |
 | 3RI                      | Requestor-initiated, non-cardholder-present                                                             | 4                                           |
-| Authentication value     | CAVV (Visa) / AAV-SPA (Mastercard) generation in scheme adapters; ECI mapping [verify values]           | 1B (simulated keys), 6 (HSM)                |
-| Cryptography             | ACS signed content (JWS) and app-channel key agreement / encryption (JWE) [verify algorithms]           | 3 (software keys, simulation only), 6 (HSM) |
+| Authentication value     | CAVV (Visa) / AAV-SPA (Mastercard) generation in scheme adapters; ECI mapping [verify values]           | 1B (simulated keys), 7 (HSM)                |
+| Cryptography             | ACS signed content (JWS) and app-channel key agreement / encryption (JWE) [verify algorithms]           | 3 (software keys, simulation only), 7 (HSM) |
 | Message extensions       | Scheme- and region-specific extensions handled by adapters                                              | 1B+                                         |
 
 ## Scheme-specific behaviour
@@ -78,6 +78,10 @@ the EMVCo specification defines and what the simulator exercises, with all assum
 Stage 1B adds a simulator ([`simulator/`](../../simulator/README.md)) acting as 3DS Server and Directory
 Server, generating synthetic AReqs and driving challenge and RReq flows end to end. Protocol conformance
 suites live in [`tests/protocol`](../../tests/protocol/README.md).
+
+**Test data.** Stage 1B uses **synthetic/test BIN ranges only**, together with synthetic issuers,
+cardholders and transactions. No real employer BIN ranges, customer information or other confidential
+data may be introduced into the independent project.
 
 ## Performance
 

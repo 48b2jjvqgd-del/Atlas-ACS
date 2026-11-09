@@ -13,6 +13,29 @@ production credentials are required.
 
 Resources: core infrastructure needs ~1.5 GB RAM; the full container stack ~4 GB; with Keycloak ~5 GB.
 
+## GitHub Codespaces
+
+The repository includes a dev container ([`.devcontainer/devcontainer.json`](../.devcontainer/devcontainer.json)).
+A new or rebuilt Codespace comes with Node 24, Docker, pnpm 12.16.1, installed dependencies and a
+generated `.env`. Then:
+
+```bash
+pnpm infra:up && pnpm db:migrate && pnpm db:seed   # or: pnpm stack:up
+```
+
+Ports for the portal (8080, 5173), gateway (4000), Grafana (3000), Prometheus (9090), RabbitMQ management
+(15672), Mailpit (8025) and Keycloak (8180) are forwarded and labelled in the **Ports** panel. Forwarded
+URLs look like `https://<codespace-name>-<port>.app.github.dev` and are private to your GitHub account.
+Data-store and broker ports are deliberately not forwarded. Allow at least 8 GB RAM: the full stack with
+Keycloak uses about 5 GB.
+
+Containers use `restart: unless-stopped`, so a running stack comes back by itself after the Codespace
+restarts. Stop it with `pnpm stack:down` or `pnpm infra:down` when you don't need it. To reclaim disk
+space after image rebuilds, run `docker builder prune -a -f`; never prune volumes, which hold local data.
+
+Existing Codespaces pick up the configuration only after **Codespaces: Rebuild Container**. If a port is
+missing from the Ports panel, use **Forward a Port** and enter its number.
+
 ## First-time setup
 
 ```bash

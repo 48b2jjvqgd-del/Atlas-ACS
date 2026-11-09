@@ -26,7 +26,7 @@ Each row also records the ATLAS stage expected to address it, and current progre
 | EMV-03 | Same                                              | Message field validation and conditional presence              | Confirmed | 1B    | —        | Implemented as versioned schemas                                                    |
 | EMV-04 | Same                                              | Error message generation                                       | Confirmed | 1B    | —        | Protocol endpoints must not use the ATLAS problem envelope (enforced by convention) |
 | EMV-05 | Same                                              | Browser and app challenge flows, UI types                      | Confirmed | 3     | —        |                                                                                     |
-| EMV-06 | Same                                              | ACS signed content and app-channel encryption                  | Confirmed | 3, 6  | —        | Algorithms to be confirmed from the specification [research]                        |
+| EMV-06 | Same                                              | ACS signed content and app-channel encryption                  | Confirmed | 3, 7  | —        | Algorithms to be confirmed from the specification [research]                        |
 | EMV-07 | EMV 3DS SDK / Split-SDK specifications            | Interaction with app-based and split-SDK flows                 | Research  | 3     | —        |                                                                                     |
 | EMV-08 | EMVCo 3DS compliance testing / Letter of Approval | Formal product approval for an ACS                             | Research  | 7     | —        | Programme terms, test plans and costs to be established                             |
 
@@ -35,10 +35,10 @@ Each row also records the ATLAS stage expected to address it, and current progre
 | ID     | Source                              | Requirement area                                          | Status     | Stage | Progress | Notes                                                                     |
 | ------ | ----------------------------------- | --------------------------------------------------------- | ---------- | ----- | -------- | ------------------------------------------------------------------------- |
 | VIS-01 | Visa Secure programme documentation | Programme rules, ACS requirements                         | Research   | 1B    | —        | Documentation not available to the independent project                    |
-| VIS-02 | Same                                | Authentication value (CAVV) generation and key management | Research   | 1B, 6 | —        | Simulated only until documentation and keys are obtained legitimately     |
+| VIS-02 | Same                                | Authentication value (CAVV) generation and key management | Research   | 1B, 7 | —        | Simulated only until documentation and keys are obtained legitimately     |
 | VIS-03 | Same                                | ECI values per outcome                                    | Assumption | 1B    | —        | Commonly published values must not be relied on without the scheme source |
 | VIS-04 | Same                                | Directory server connectivity, certificates, mTLS         | Research   | 7     | —        | No live connectivity in independent development                           |
-| VIS-05 | Same                                | Performance / availability obligations                    | Research   | 1B, 7 | —        |                                                                           |
+| VIS-05 | Same                                | Performance / availability obligations                    | Research   | 1B, 6 | —        |                                                                           |
 | VIS-06 | Visa testing / certification        | ACS compliance testing                                    | Research   | 7     | —        |                                                                           |
 
 ## Mastercard
@@ -46,7 +46,7 @@ Each row also records the ATLAS stage expected to address it, and current progre
 | ID    | Source                                            | Requirement area                                               | Status     | Stage | Progress | Notes                                                  |
 | ----- | ------------------------------------------------- | -------------------------------------------------------------- | ---------- | ----- | -------- | ------------------------------------------------------ |
 | MC-01 | Mastercard Identity Check programme documentation | Programme rules, ACS requirements                              | Research   | 1B    | —        | Documentation not available to the independent project |
-| MC-02 | Same                                              | Authentication value (AAV / SPA) generation and key management | Research   | 1B, 6 | —        | Simulated only                                         |
+| MC-02 | Same                                              | Authentication value (AAV / SPA) generation and key management | Research   | 1B, 7 | —        | Simulated only                                         |
 | MC-03 | Same                                              | ECI values per outcome                                         | Assumption | 1B    | —        | As VIS-03                                              |
 | MC-04 | Same                                              | Directory server connectivity, certificates, mTLS              | Research   | 7     | —        |                                                        |
 | MC-05 | Same                                              | Data-sharing / risk-data fields and extensions                 | Research   | 2     | —        |                                                        |
@@ -76,12 +76,12 @@ Each row also records the ATLAS stage expected to address it, and current progre
 
 | ID     | Source                                | Requirement area                                                  | Status    | Stage | Progress | Notes                                                                       |
 | ------ | ------------------------------------- | ----------------------------------------------------------------- | --------- | ----- | -------- | --------------------------------------------------------------------------- |
-| PCI-01 | PCI 3DS Core Security Standard        | Security of 3DS environments (ACS, DS, 3DS Server)                | Confirmed | 6–7   | —        | Applicability to the eventual deployment to be confirmed with a QSA         |
-| PCI-02 | PCI DSS v4.0.1                        | Protection of account data where stored, processed or transmitted | Confirmed | 6–7   | Partial  | Foundations: no PAN storage, log redaction, PAN masking to first 6 / last 4 |
-| PCI-03 | PCI DSS — scoping and segmentation    | Minimising cardholder-data environment scope                      | Research  | 6     | Design   | Service boundaries chosen to keep account data in few services              |
+| PCI-01 | PCI 3DS Core Security Standard        | Security of 3DS environments (ACS, DS, 3DS Server)                | Confirmed | 7     | —        | Applicability to the eventual deployment to be confirmed with a QSA         |
+| PCI-02 | PCI DSS v4.0.1                        | Protection of account data where stored, processed or transmitted | Confirmed | 7     | Partial  | Foundations: no PAN storage, log redaction, PAN masking to first 6 / last 4 |
+| PCI-03 | PCI DSS — scoping and segmentation    | Minimising cardholder-data environment scope                      | Research  | 7     | Design   | Service boundaries chosen to keep account data in few services              |
 | PCI-04 | PCI DSS — secure software development | Secure SDLC, code review, dependency management                   | Confirmed | 0+    | Partial  | CI gates, dependency audit, Dependabot, pinned actions                      |
-| PCI-05 | PCI DSS — key management              | Cryptographic key lifecycle, HSM usage                            | Confirmed | 6     | —        |                                                                             |
-| PCI-06 | PCI DSS — logging and monitoring      | Audit trails, log review, time sync                               | Confirmed | 5–6   | Partial  | Structured logs, audit-service design                                       |
+| PCI-05 | PCI DSS — key management              | Cryptographic key lifecycle, HSM usage                            | Confirmed | 7     | —        |                                                                             |
+| PCI-06 | PCI DSS — logging and monitoring      | Audit trails, log review, time sync                               | Confirmed | 5, 7  | Partial  | Structured logs, audit-service design                                       |
 
 ## Unverified assumptions register
 

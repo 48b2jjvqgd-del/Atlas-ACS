@@ -49,13 +49,13 @@ No component depends on a particular cloud provider.
 
 ## Secrets replacement
 
-| Secret                                      | Local source                              | Company replacement                                                                                                          |
-| ------------------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Database, Valkey, RabbitMQ credentials      | Generated into `.env` by `pnpm setup:env` | Secret manager, mounted as files: `DATABASE_URL_FILE`, `VALKEY_URL_FILE`, `RABBITMQ_URL_FILE`, `MIGRATION_DATABASE_URL_FILE` |
-| Grafana / Keycloak admin passwords          | `.env`                                    | Not migrated — company tools replace them                                                                                    |
-| OIDC client configuration (Stage 1A)        | Keycloak realm import                     | Company IdP registration                                                                                                     |
-| Service-to-service credentials (Stage 1A/6) | Local Keycloak clients / dev CA           | Company PKI and token issuer                                                                                                 |
-| Cryptographic keys (Stage 1B+)              | Software keys, **simulation only**        | HSM-held keys, generated in the target environment. **No key material ever moves from the independent environment.**         |
+| Secret                                 | Local source                                                      | Company replacement                                                                                                          |
+| -------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Database, Valkey, RabbitMQ credentials | Generated into `.env` by `pnpm setup:env`                         | Secret manager, mounted as files: `DATABASE_URL_FILE`, `VALKEY_URL_FILE`, `RABBITMQ_URL_FILE`, `MIGRATION_DATABASE_URL_FILE` |
+| Grafana / Keycloak admin passwords     | `.env`                                                            | Not migrated — company tools replace them                                                                                    |
+| OIDC client configuration (Stage 1A)   | Keycloak realm import                                             | Company IdP registration                                                                                                     |
+| Service-to-service credentials         | Local Keycloak client-credentials tokens, implemented in Stage 1A | Company PKI and token issuer, integrated in Stage 7                                                                          |
+| Cryptographic keys (Stage 1B+)         | Software keys, **simulation only**                                | HSM-held keys, generated in the target environment. **No key material ever moves from the independent environment.**         |
 
 All local credentials are disposable; none are reused anywhere else.
 
@@ -76,7 +76,7 @@ All local credentials are disposable; none are reused anywhere else.
 | Integration                                            | Independent environment                        | Company environment                                                                                       |
 | ------------------------------------------------------ | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
 | Visa / Mastercard directory servers                    | ATLAS simulator (Stage 1B+)                    | Scheme test, then production DS endpoints via the adapters' configuration, with company-held certificates |
-| HSM                                                    | Software provider (simulation only, Stage 1B+) | Company HSM via the provider interface (Stage 6)                                                          |
+| HSM                                                    | Software provider (simulation only, Stage 1B+) | Company HSM via the provider interface (Stage 7)                                                          |
 | OTP / out-of-band delivery                             | Mailpit, simulated SMS/app                     | Company or contracted delivery providers via provider interfaces                                          |
 | Issuer systems (card data, cardholder contact details) | Synthetic data                                 | Company integrations, designed with data-protection review                                                |
 
