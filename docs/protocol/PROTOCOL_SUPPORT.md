@@ -79,6 +79,10 @@ Stage 1B adds a simulator ([`simulator/`](../../simulator/README.md)) acting as 
 Server, generating synthetic AReqs and driving challenge and RReq flows end to end. Protocol conformance
 suites live in [`tests/protocol`](../../tests/protocol/README.md).
 
+**Test data.** Stage 1B uses **synthetic/test BIN ranges only**, together with synthetic issuers,
+cardholders and transactions. No real employer BIN ranges, customer information or other confidential
+data may be introduced into the independent project.
+
 ## Performance
 
 Directory servers expect ACS responses within strict time limits [verify per scheme]. This is why the

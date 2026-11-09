@@ -22,14 +22,14 @@
 
 ## Data classification
 
-| Class                                          | Examples                                                                                                                       | Handling                                                                                                                                                  |
-| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Restricted — authentication secrets**        | Passwords, OTP values, private keys, HSM credentials, service tokens, session cookies                                          | Never logged, never persisted in clear, never returned by APIs. Held in memory only for the minimum time.                                                 |
-| **Restricted — cardholder data**               | PAN, expiry date, cardholder name with PAN                                                                                     | Never logged; masked to at most first 6 / last 4 when displayed; never stored in clear (tokenisation/encryption design required before Stage 1A storage). |
-| **Restricted — sensitive authentication data** | CVV2/CVC2, track data, PIN data, authentication values (CAVV/AAV), 3DS ephemeral keys                                          | Never stored after authorisation-related use; never logged.                                                                                               |
-| **Confidential**                               | Tenant configuration, fraud rules, audit records, user identities, transaction metadata without card data, device/browser data | Tenant-isolated; access-controlled; personal data handled under UK GDPR / GDPR.                                                                           |
-| **Internal**                                   | Service metrics, non-sensitive logs, architecture documentation                                                                | Not public; no special handling.                                                                                                                          |
-| **Public**                                     | Published API contracts, open-source code                                                                                      | —                                                                                                                                                         |
+| Class                                          | Examples                                                                                                                       | Handling                                                                                                                                             |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Restricted — authentication secrets**        | Passwords, OTP values, private keys, HSM credentials, service tokens, session cookies                                          | Never logged, never persisted in clear, never returned by APIs. Held in memory only for the minimum time.                                            |
+| **Restricted — cardholder data**               | PAN, expiry date, cardholder name with PAN                                                                                     | Never logged; masked to at most first 6 / last 4 when displayed; never stored in clear (tokenisation/encryption design required before any storage). |
+| **Restricted — sensitive authentication data** | CVV2/CVC2, track data, PIN data, authentication values (CAVV/AAV), 3DS ephemeral keys                                          | Never stored after authorisation-related use; never logged.                                                                                          |
+| **Confidential**                               | Tenant configuration, fraud rules, audit records, user identities, transaction metadata without card data, device/browser data | Tenant-isolated; access-controlled; personal data handled under UK GDPR / GDPR.                                                                      |
+| **Internal**                                   | Service metrics, non-sensitive logs, architecture documentation                                                                | Not public; no special handling.                                                                                                                     |
+| **Public**                                     | Published API contracts, open-source code                                                                                      | —                                                                                                                                                    |
 
 ## What exists in Stage 0
 
@@ -58,6 +58,10 @@ Log identifiers (transaction ID, tenant ID, correlation ID) and outcomes instead
 [`redaction.ts`](../../packages/security/src/redaction.ts); additions are welcome, removals need review.
 
 ## Service-to-service authentication — _Design (Stage 1A / Stage 7)_
+
+**Stage split.** Local service authentication (Keycloak client-credentials tokens, validation in the
+service kit, per-route caller authorisation) is implemented in **Stage 1A**. Integration with production
+company PKI (mTLS certificates) and the company token infrastructure belongs to **Stage 7**.
 
 Stage 0 has none: services trust their network. `x-atlas-caller` is identification only.
 

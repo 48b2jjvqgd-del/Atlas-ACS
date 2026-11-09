@@ -32,18 +32,18 @@ _No business logic._
 Goal: no sensitive domain functionality is built until identity, isolation, least privilege and
 auditability are in place and tested. Includes issuer administration and RBAC.
 
-| #   | Deliverable                                                                                                                                                                                                                                                  | Acceptance evidence                                                                                            |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
-| 1   | **Keycloak OIDC authentication in the portal**: authorisation code + PKCE; secure session handling (backend-for-frontend or secure cookies); sign-out; MFA for platform administrators                                                                       | E2E sign-in and sign-out against Keycloak; no tokens in browser storage                                        |
-| 2   | **Backend-enforced RBAC**: identity-service roles and granular permissions; every API route declares its required permission; deny by default; permission-driven portal navigation                                                                           | Unit tests per permission; API tests proving `403` without permission                                          |
-| 3   | **Issuer administration and tenant isolation**: issuer-service tenant registry API (`/v1/tenants`), onboarding lifecycle, issuer configuration basics; tenant-scoped repository conventions; PostgreSQL row-level security as defence in depth               | Integration tests per tenant-scoped table                                                                      |
-| 4   | **Tenant identity from verified claims only**: tenant context derived from validated token claims mapped by identity-service; client-supplied tenant IDs are never trusted and must match an authorised tenant                                               | Tests that tamper with path, query, body and header tenant IDs                                                 |
-| 5   | **Cross-tenant access tests**: an automated suite in which a principal of tenant A receives `404` for every tenant B resource, across every tenant-scoped endpoint                                                                                           | Suite runs in CI; new endpoints must be added to it                                                            |
-| 6   | **Per-service database credentials and restricted permissions**: a migrator role plus one role per service, limited to its own schema (see [DATA_MODEL.md](../architecture/DATA_MODEL.md#mandatory-gate-per-service-credentials-and-restricted-permissions)) | Integration tests proving each role is denied every other schema                                               |
-| 7   | **Service-to-service authentication**: OAuth 2.0 client-credentials tokens (Keycloak locally) with a per-callee audience, validated by the service kit; per-route caller authorisation; mTLS design                                                          | Tests rejecting missing, expired, wrong-audience and wrong-caller tokens                                       |
-| 8   | **Audit foundations for sensitive configuration changes**: `configuration-changed` events written through a transactional outbox; append-only audit-service store with a per-tenant hash chain                                                               | Tests proving a change cannot commit without its audit event, and that audit rows cannot be updated or deleted |
-| 9   | **RabbitMQ reconnection and resilience**: automatic reconnect and consumer resubscription, bounded publisher retry, retry with back-off via delay queues, poison-message handling, idempotent consumers                                                      | Integration tests that restart RabbitMQ mid-flow and assert no loss and no duplicate side effects              |
-| 10  | **End-to-end OpenTelemetry tracing verification**: local OTLP collector and trace backend in Compose; trace context propagated across HTTP and RabbitMQ; correlation ID recorded on spans                                                                    | Automated test asserting one trace spans portal → gateway → service → event consumer                           |
+| #   | Deliverable                                                                                                                                                                                                                                                      | Acceptance evidence                                                                                            |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| 1   | **Keycloak OIDC authentication in the portal**: authorisation code + PKCE; secure session handling (backend-for-frontend or secure cookies); sign-out; MFA for platform administrators                                                                           | E2E sign-in and sign-out against Keycloak; no tokens in browser storage                                        |
+| 2   | **Backend-enforced RBAC**: identity-service roles and granular permissions; every API route declares its required permission; deny by default; permission-driven portal navigation                                                                               | Unit tests per permission; API tests proving `403` without permission                                          |
+| 3   | **Issuer administration and tenant isolation**: issuer-service tenant registry API (`/v1/tenants`), onboarding lifecycle, issuer configuration basics; tenant-scoped repository conventions; PostgreSQL row-level security as defence in depth                   | Integration tests per tenant-scoped table                                                                      |
+| 4   | **Tenant identity from verified claims only**: tenant context derived from validated token claims mapped by identity-service; client-supplied tenant IDs are never trusted and must match an authorised tenant                                                   | Tests that tamper with path, query, body and header tenant IDs                                                 |
+| 5   | **Cross-tenant access tests**: an automated suite in which a principal of tenant A receives `404` for every tenant B resource, across every tenant-scoped endpoint                                                                                               | Suite runs in CI; new endpoints must be added to it                                                            |
+| 6   | **Per-service database credentials and restricted permissions**: a migrator role plus one role per service, limited to its own schema (see [DATA_MODEL.md](../architecture/DATA_MODEL.md#mandatory-gate-per-service-credentials-and-restricted-permissions))     | Integration tests proving each role is denied every other schema                                               |
+| 7   | **Service-to-service authentication**: OAuth 2.0 client-credentials tokens (Keycloak locally) with a per-callee audience, validated by the service kit; per-route caller authorisation; mTLS design. Company PKI and token infrastructure integration is Stage 7 | Tests rejecting missing, expired, wrong-audience and wrong-caller tokens                                       |
+| 8   | **Audit foundations for sensitive configuration changes**: `configuration-changed` events written through a transactional outbox; append-only audit-service store with a per-tenant hash chain                                                                   | Tests proving a change cannot commit without its audit event, and that audit rows cannot be updated or deleted |
+| 9   | **RabbitMQ reconnection and resilience**: automatic reconnect and consumer resubscription, bounded publisher retry, retry with back-off via delay queues, poison-message handling, idempotent consumers                                                          | Integration tests that restart RabbitMQ mid-flow and assert no loss and no duplicate side effects              |
+| 10  | **End-to-end OpenTelemetry tracing verification**: local OTLP collector and trace backend in Compose; trace context propagated across HTTP and RabbitMQ; correlation ID recorded on spans                                                                        | Automated test asserting one trace spans portal → gateway → service → event consumer                           |
 
 Also in 1A: a Valkey-backed rate-limit store at the gateway.
 
@@ -51,9 +51,13 @@ Also in 1A: a Valkey-backed rate-limit store at the gateway.
 
 Prerequisite: Stage 1A complete, because 1B introduces authentication transaction data.
 
+> **Independent-development rule.** No real employer BIN ranges, customer information, issuer data or
+> other confidential information may be introduced into the independent project, in any stage. All
+> issuers, BIN ranges, cardholders and transactions are synthetic.
+
 - Confirm the EMV 3DS version baseline (compliance matrix EMV-02).
-- protocol service: versioned message schemas, validation, conditional-presence rules, Erro handling and
-  version negotiation.
+- protocol service: versioned message schemas, validation, conditional-presence rules, Error handling
+  (EMV `Erro` messages) and version negotiation.
 - Simulator: 3DS Server role, plus **simulated Visa and Mastercard Directory Servers**, generating
   synthetic AReqs and receiving ARes.
 - visa-adapter and mastercard-adapter connected to the simulated Directory Servers; simulated
@@ -63,7 +67,8 @@ Prerequisite: Stage 1A complete, because 1B introduces authentication transactio
   driven by the simulator scenario), clearly marked as non-decisioning. **Fraud scoring, rules and decision
   logic are Stage 2**; challenge flows are Stage 3.
 - Issuer BIN ranges and scheme participation; portal views for issuer authentication activity and
-  platform integrations.
+  platform integrations. **Synthetic/test BIN ranges only** (for example, ranges reserved for testing or
+  clearly fictitious ranges), flagged `is_synthetic`.
 - Protocol security controls: message signing and validation, replay protection, input hardening and
   protocol-level logging rules, implemented with simulation-only software keys.
 - Protocol conformance suite in `tests/protocol`.
