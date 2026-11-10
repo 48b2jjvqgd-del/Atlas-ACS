@@ -1,0 +1,10 @@
+apiVersion: 1
+datasources:
+  # Distributed traces (Stage 1A). Search by service, or by the atlas.correlation_id tag shown in
+  # every API response (x-correlation-id) and audit record.
+  - name: Jaeger
+    uid: atlas-jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    editable: false

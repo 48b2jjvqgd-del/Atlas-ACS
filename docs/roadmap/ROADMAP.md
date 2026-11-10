@@ -8,7 +8,7 @@ review (ADR-022).
 | Stage | Name                                                                  | Status                                 |
 | ----- | --------------------------------------------------------------------- | -------------------------------------- |
 | 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08) |
-| 1A    | Platform security and issuer foundations                              | Planned — **not started**              |
+| 1A    | Platform security and issuer foundations                              | **Implemented — awaiting review**      |
 | 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**              |
 | 2     | Fraud and decision engine                                             | Planned                                |
 | 3     | Challenge engine                                                      | Planned                                |
@@ -46,6 +46,25 @@ auditability are in place and tested. Includes issuer administration and RBAC.
 | 10  | **End-to-end OpenTelemetry tracing verification**: local OTLP collector and trace backend in Compose; trace context propagated across HTTP and RabbitMQ; correlation ID recorded on spans                                                                        | Automated test asserting one trace spans portal → gateway → service → event consumer                           |
 
 Also in 1A: a Valkey-backed rate-limit store at the gateway.
+
+### Stage 1A delivery status
+
+| #   | Status                                                                                                                  | Evidence                                                                       |
+| --- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1   | Implemented: OIDC code + PKCE BFF, sessions, sign-out, TOTP for platform users                                          | `tests/system/authentication.test.ts`, browser journeys                        |
+| 2   | Implemented: permission catalogue, deny-by-default route policies, permission-driven portal                             | `access.test.ts`, `permissions.test.ts`, `navigation.test.ts`, `shell.spec.ts` |
+| 3   | Implemented: issuer registry, lifecycle, versioned configuration, users; RLS                                            | `issuer-management.test.ts`, `database-security.test.ts`                       |
+| 4   | Implemented: tenant context from verified principals; tampering tests                                                   | `tenant-isolation.test.ts`                                                     |
+| 5   | Implemented for every tenant-scoped endpoint (both directions)                                                          | `tenant-isolation.test.ts`                                                     |
+| 6   | Implemented: migrator + per-service roles; append-only audit role                                                       | `database-security.test.ts`                                                    |
+| 7   | Implemented: client-credentials per callee, caller allow-lists; mTLS design documented                                  | `access.test.ts`, `service-security.test.ts`                                   |
+| 8   | Implemented: activity events via transactional/Valkey outbox; hash-chained append-only store                            | `database-security.test.ts`, `audit.test.ts`                                   |
+| 9   | Implemented: resubscription, bounded publish retry, delayed retries, DLQ, unrouted-event retention, idempotent consumer | `messaging-resilience.test.ts` (forced connection loss)                        |
+| 10  | Implemented: OTLP to Jaeger; HTTP, fetch, PostgreSQL and RabbitMQ propagation                                           | `tracing.test.ts`                                                              |
+| —   | Valkey-backed rate limiting with fallback                                                                               | `rate-limit-store.test.ts`, `rate-limit.test.ts`                               |
+
+Not done in 1A (deliberately): BIN ranges (1B), authentication activity views (1B), external
+anchoring of audit chain heads, session listing per user.
 
 ## Stage 1B — ACS protocol foundation and simulated Visa/Mastercard DS connectivity
 

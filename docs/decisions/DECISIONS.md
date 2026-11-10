@@ -7,7 +7,8 @@ Decision log in lightweight ADR form.
   (2026-11-08).
 - **Accepted (general approval)** — approved by the owner as general architectural decisions at the
   Stage 0 final review (2026-11-08); documentation and rationale retained.
-- **Proposed** — awaiting the owner's decision. _None outstanding._
+- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-032 are proposed with Stage 1A and are
+  implemented on the Stage 1A branch for review.
 
 | ADR | Decision                                                                     | Status                             |
 | --- | ---------------------------------------------------------------------------- | ---------------------------------- |
@@ -34,6 +35,15 @@ Decision log in lightweight ADR form.
 | 021 | Documentation file locations                                                 | Accepted                           |
 | 022 | Final stage structure (1A, 1B, 2–7)                                          | Accepted (owner's final structure) |
 | 023 | GitHub Codespaces development configuration                                  | Accepted                           |
+| 024 | Backend-for-frontend sessions at the gateway                                 | Proposed (Stage 1A)                |
+| 025 | Database roles provisioned outside migrations; grants from the catalogue     | Proposed (Stage 1A)                |
+| 026 | identity-service is the system of record for authorisation                   | Proposed (Stage 1A)                |
+| 027 | Service tokens per callee audience; user token forwarded and re-verified     | Proposed (Stage 1A)                |
+| 028 | One audit event, outbox delivery, hash-chained append-only store             | Proposed (Stage 1A)                |
+| 029 | Jaeger as the local trace backend                                            | Proposed (Stage 1A)                |
+| 030 | A second factor is required for platform-wide permissions                    | Proposed (Stage 1A)                |
+| 031 | Event contracts may have several producers                                   | Proposed (Stage 1A)                |
+| 032 | Cross-tenant access returns 404 and is audited on the platform chain         | Proposed (Stage 1A)                |
 
 ---
 
@@ -265,3 +275,92 @@ uses `restart: unless-stopped`: infrastructure (PostgreSQL, Valkey, RabbitMQ, Ke
 Prometheus, Grafana), the portal and all services. So the stack comes back on its own after a
 Codespace or Docker restart. Containers you stop deliberately (`docker compose stop`, `pnpm stack:down`)
 stay stopped. The one-off `migrate` job keeps `restart: 'no'`. No other infrastructure was changed.
+
+---
+
+## Stage 1A decisions (proposed, implemented for review)
+
+### ADR-024 Backend-for-frontend sessions at the gateway — _Proposed_
+
+**Decision.** api-gateway is a confidential OIDC client (authorisation code + PKCE) and keeps the
+tokens server-side in Valkey, encrypted with AES-256-GCM. The browser holds one opaque HttpOnly
+`__Host-` cookie. CSRF: session-bound header token plus Origin check.
+
+**Why.** No token in browser storage (roadmap acceptance criterion), refresh tokens never exposed to
+scripts, and one place to enforce idle/absolute expiry. **Alternatives:** a public SPA client with
+tokens in memory (exposes tokens to XSS, refresh handling in the browser); a separate BFF service
+(another hop with no benefit at this scale). **Consequence:** the gateway depends on Valkey; it fails
+closed (503) when Valkey is unavailable.
+
+### ADR-025 Database roles provisioned outside migrations; grants from the catalogue — _Proposed_
+
+**Decision.** Implements the ADR-012 gate. Roles and passwords are created by a separate provisioning
+step with an administrative connection (`pnpm db:provision`); migrations run as `atlas_migrator`, which
+then applies grants computed from the service catalogue. Migration SQL never names roles.
+
+**Why.** Passwords never appear in migration files or history; the same migrations work under a
+company DBA's role scheme; grants cannot drift from ownership. **Alternative:** roles in migrations
+(couples schema history to credentials and cluster-wide objects).
+
+### ADR-026 identity-service is the system of record for authorisation — _Proposed_
+
+**Decision.** The IdP authenticates; identity-service stores users, roles, permissions and issuer
+memberships and resolves a principal per request (cached ≤ 10 s in each service). Role or group claims
+in tokens are not used. Users are provisioned at the IdP by identity-service through the Keycloak Admin
+API, with an emailed invitation; ATLAS never handles passwords.
+
+**Why.** Tenant memberships and fine-grained permissions belong to ATLAS, change often and must be
+audited; keeping them out of tokens means changes apply within seconds rather than at token renewal, and
+the IdP stays replaceable (company IdP in Stage 7). **Cost:** one cached lookup per request.
+
+### ADR-027 Service tokens per callee audience; user token forwarded and re-verified — _Proposed_
+
+**Decision.** Each calling service obtains a client-credentials token per callee (scope `aud-<callee>`);
+Keycloak only grants audiences configured for the caller. Callees verify audience, issuer, expiry and
+caller per route. For user requests the gateway also forwards the user's access token
+(`x-atlas-user-token`), which each service verifies itself.
+
+**Why.** A stolen token is only good for one callee; the call graph is enforced twice; a compromised
+gateway cannot invent users. **Alternative:** gateway-asserted identity headers (trusted subsystem) —
+rejected as weaker. mTLS is the Stage 7 transport layer (SECURITY_MODEL.md).
+
+### ADR-028 One audit event, outbox delivery, hash-chained append-only store — _Proposed_
+
+**Decision.** All producers emit `atlas.platform.activity-recorded.v1`. PostgreSQL producers write it in
+the same transaction as the change (transactional outbox); the gateway uses a durable Valkey list.
+audit-service stores it idempotently (event id as key) in a per-tenant SHA-256 hash chain, append-only
+at the privilege, trigger and API levels. Before/after values are recorded for allow-listed
+non-sensitive fields only.
+
+**Why.** "A change cannot commit without its audit event" (roadmap 1A-8) and no loss during broker
+outages. **Change from Stage 0:** the earlier example contract `configuration-changed.v1` carried field
+names only; the owner asked for before/after information, so values are now recorded for allow-listed
+fields, and the contract rejects credential-like field names. `configuration-changed.v1` remains as an
+unused example contract.
+
+### ADR-029 Jaeger as the local trace backend — _Proposed_
+
+**Decision.** `jaegertracing/jaeger:2.22.0` (Apache-2.0) receives OTLP directly; Grafana gets a Jaeger
+datasource. **Why:** permissive licence, single container, query API used by an automated trace test.
+**Alternative:** Grafana Tempo (AGPL-3.0, more moving parts). Services only speak OTLP, so the backend
+is replaceable.
+
+### ADR-030 A second factor is required for platform-wide permissions — _Proposed_
+
+**Decision.** Platform users must enrol TOTP (required at invitation; pre-enrolled for local demo
+accounts). The IdP reports the methods used in `amr` (configured AMR references `pwd`/`otp`); the
+gateway and every service ignore platform-wide permissions when `amr` lacks a second factor
+(`PLATFORM_MFA_REQUIRED`, default true). Issuer users may enrol optionally.
+
+### ADR-031 Event contracts may have several producers — _Proposed_
+
+**Decision.** `defineEvent` accepts `producers` (still accepts a single `producer`); publishers must be
+listed. Needed because several services emit audit activity. Additive change to `@atlas/contracts`.
+
+### ADR-032 Cross-tenant access returns 404 and is audited on the platform chain — _Proposed_
+
+**Decision.** A user with no access to an issuer gets 404 for any of its resources (403 only inside an
+issuer they belong to). The denial is recorded on the platform audit chain with the target issuer in
+metadata, not in the target issuer's own trail.
+
+**Why.** Existence is not disclosed, and one issuer's auditors never see another issuer's users.
