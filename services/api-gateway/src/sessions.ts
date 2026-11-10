@@ -22,6 +22,9 @@ import type { Redis } from 'ioredis';
  */
 export interface SessionRecord {
   subject: string;
+  /** ATLAS user id and name, for audit records. */
+  userId: string;
+  displayName: string;
   idpSessionId: string | null;
   accessToken: string;
   accessExpiresAt: number;
@@ -112,7 +115,9 @@ export class SessionStore {
   }
 
   /** Loads a session; returns `expired` for one past its idle or absolute expiry. */
-  async load(id: string): Promise<{ session: SessionRecord } | { expired: true } | undefined> {
+  async load(
+    id: string,
+  ): Promise<{ session: SessionRecord } | { expired: true; previous: SessionRecord } | undefined> {
     const stored = await this.redis.get(this.storageKey(id));
     if (!stored) return undefined;
     const session = this.decrypt<SessionRecord>(stored);
@@ -120,7 +125,7 @@ export class SessionStore {
     const now = Date.now();
     if (now >= session.idleExpiresAt || now >= session.absoluteExpiresAt) {
       await this.destroy(id);
-      return { expired: true };
+      return { expired: true, previous: session };
     }
     return { session };
   }

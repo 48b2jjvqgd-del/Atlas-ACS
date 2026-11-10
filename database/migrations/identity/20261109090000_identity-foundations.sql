@@ -79,7 +79,7 @@ CREATE TABLE identity.platform_role_assignment (
   FOREIGN KEY (role_key, role_scope) REFERENCES identity.role (key, scope) ON DELETE RESTRICT
 );
 
--- Issuer memberships: a user's roles within one issuer. Only tenant-scoped roles can be assigned.
+-- Issuer memberships: a user's roles within one issuer; only tenant-scoped roles can be assigned.
 CREATE TABLE identity.tenant_role_assignment (
   user_id     uuid        NOT NULL REFERENCES identity.user_account (id) ON DELETE CASCADE,
   tenant_id   uuid        NOT NULL,

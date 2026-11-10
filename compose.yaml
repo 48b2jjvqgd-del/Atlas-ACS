@@ -268,6 +268,7 @@ services:
       PORTAL_PUBLIC_URL: ${ATLAS_PORTAL_PUBLIC_URL:-http://localhost:8080}
       OIDC_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET_GATEWAY:?run pnpm setup:env}
       SESSION_ENCRYPTION_KEY: ${SESSION_ENCRYPTION_KEY:?run pnpm setup:env}
+      RATE_LIMIT_SIGN_IN_MAX: ${RATE_LIMIT_SIGN_IN_MAX:-20}
       # The portal's nginx is the only proxy in front of the gateway.
       TRUSTED_PROXY_ADDRESSES: 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
     ports: ['127.0.0.1:4000:4000']

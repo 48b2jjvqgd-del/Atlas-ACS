@@ -34,6 +34,7 @@ import {
 } from '@atlas/service-kit';
 import { AtlasError } from '@atlas/shared';
 import type { FastifyRequest } from 'fastify';
+import type { Pool, PoolClient } from 'pg';
 import { createKeycloakAdmin, splitName, type IdentityProviderAdmin } from './identity-provider.js';
 import { startIdpEventIngestion } from './idp-events.js';
 import * as repo from './repository.js';
@@ -66,7 +67,7 @@ const configShape = {
 };
 
 function localPrincipals(context: {
-  infrastructure: { postgres?: { pool: import('pg').Pool } };
+  infrastructure: { postgres?: { pool: Pool } };
 }): PrincipalResolver {
   return {
     async resolve(subject) {
@@ -666,7 +667,7 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
 
       // ---------------------------------------------------------- helpers
       async function assertRolesHaveScope(
-        client: import('pg').PoolClient,
+        client: PoolClient,
         roles: readonly string[],
         scope: 'platform' | 'tenant',
       ) {
@@ -681,7 +682,7 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
       }
 
       async function ensureLocalUser(
-        client: import('pg').PoolClient,
+        client: PoolClient,
         body: z.infer<typeof inviteUserBodySchema>,
         platform: boolean,
       ) {

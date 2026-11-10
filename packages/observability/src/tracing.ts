@@ -61,7 +61,7 @@ export function startTracing(settings: TracingSettings): TracingHandle | undefin
         ignoreRequestHook: (request) => /\/(health|metrics)/.test(request.path),
       }),
       // Statement text only (parameter values are never recorded).
-      new PgInstrumentation({ enhancedDatabaseReporting: false }),
+      new PgInstrumentation({ enhancedDatabaseReporting: false, requireParentSpan: true }),
     ],
   });
   sdk.start();

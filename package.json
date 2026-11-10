@@ -19,6 +19,7 @@
     "test:watch": "vitest --project unit",
     "test:smoke": "vitest run --project smoke",
     "test:integration": "vitest run --project integration",
+    "test:system": "vitest run --project system",
     "test:e2e": "pnpm --filter @atlas/e2e-tests test",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "audit:deps": "pnpm audit --audit-level high",

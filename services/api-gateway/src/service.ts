@@ -51,8 +51,6 @@ import { ValkeyOutbox } from './valkey-outbox.js';
 const SESSION_PATHS = /^\/v1\/(tenants|identity|audit)(\/|$)/;
 
 const policies = {
-  /** Sign-in and callback: per client address. */
-  authentication: { max: 20, timeWindow: 5 * 60_000 },
   session: { max: 120, timeWindow: 60_000 },
   read: { max: rateLimitDefaults.portal.max, timeWindow: rateLimitDefaults.portal.timeWindowMs },
   /** Administrative writes: per session. */
@@ -109,6 +107,8 @@ export const definition = defineService({
     /** Secure cookies (HTTPS, or http://localhost which browsers treat as secure). */
     COOKIE_SECURE: booleanStringSchema.default(true),
     UPSTREAM_TIMEOUT_MS: positiveIntSchema.default(10_000),
+    /** Sign-in starts and callbacks per client address per 5 minutes. */
+    RATE_LIMIT_SIGN_IN_MAX: positiveIntSchema.default(20),
   },
   async register(app, context) {
     const { config, logger, metadata, metrics } = context;
@@ -119,6 +119,7 @@ export const definition = defineService({
     const cookies = cookieNames(config.COOKIE_SECURE);
     const allowedOrigins = new Set([...config.CORS_ALLOWED_ORIGINS, new URL(portal).origin]);
 
+    const authentication = { max: config.RATE_LIMIT_SIGN_IN_MAX, timeWindow: 5 * 60_000 };
     const sessions = new SessionStore(redis, config.SESSION_ENCRYPTION_KEY, {
       idleMs: config.SESSION_IDLE_TIMEOUT_MS,
       absoluteMs: config.SESSION_ABSOLUTE_TIMEOUT_MS,
@@ -249,11 +250,15 @@ export const definition = defineService({
       if ('expired' in loaded) {
         clearSessionCookie(reply);
         await recordAudit(request, {
-          actor: { type: 'anonymous', id: 'anonymous' },
+          actor: {
+            type: 'user',
+            id: loaded.previous.userId,
+            displayName: loaded.previous.displayName,
+          },
           action: 'auth.session.expired',
           resource: { type: 'session', id: 'portal' },
           outcome: 'failure',
-          metadata: { reason: 'timeout' },
+          metadata: { reason: 'idle-or-absolute-timeout' },
         });
         throw new AtlasError('UNAUTHENTICATED', {
           detail: 'Your session has expired. Please sign in again.',
@@ -264,7 +269,11 @@ export const definition = defineService({
         await sessions.destroy(id);
         clearSessionCookie(reply);
         await recordAudit(request, {
-          actor: { type: 'user', id: loaded.session.subject },
+          actor: {
+            type: 'user',
+            id: loaded.session.userId,
+            displayName: loaded.session.displayName,
+          },
           action: 'auth.session.expired',
           resource: { type: 'session', id: 'portal' },
           outcome: 'failure',
@@ -317,7 +326,7 @@ export const definition = defineService({
       ) {
         metrics.accessDenied.inc({ reason: 'csrf' });
         await recordAudit(request, {
-          actor: { type: 'user', id: record.subject },
+          actor: { type: 'user', id: record.userId, displayName: record.displayName },
           action: 'access.denied',
           resource: {
             type: 'api-route',
@@ -343,7 +352,7 @@ export const definition = defineService({
       {
         config: {
           rateLimit: {
-            ...policies.authentication,
+            ...authentication,
             keyGenerator: (r: FastifyRequest) => `ip:${r.ip}`,
           },
         },
@@ -374,7 +383,7 @@ export const definition = defineService({
       {
         config: {
           rateLimit: {
-            ...policies.authentication,
+            ...authentication,
             keyGenerator: (r: FastifyRequest) => `ip:${r.ip}`,
           },
         },
@@ -429,9 +438,12 @@ export const definition = defineService({
         if (response.body.data.status !== 'active') return fail('account-disabled');
         principals.invalidate(signedIn.subject);
 
+        const principal = response.body.data;
         const id = SessionStore.newId();
         const record = sessions.create({
           subject: signedIn.subject,
+          userId: principal.userId,
+          displayName: principal.displayName,
           idpSessionId: signedIn.idpSessionId,
           accessToken: signedIn.accessToken,
           accessExpiresAt: signedIn.expiresAt,
@@ -444,7 +456,6 @@ export const definition = defineService({
           serialiseCookie(cookies.login, '', { secure: config.COOKIE_SECURE, maxAgeSeconds: 0 }),
           serialiseCookie(cookies.session, id, { secure: config.COOKIE_SECURE }),
         ]);
-        const principal = response.body.data;
         const mfa = signedIn.amr.includes('otp');
         await recordAudit(request, {
           actor: { type: 'user', id: principal.userId, displayName: principal.displayName },
@@ -466,12 +477,20 @@ export const definition = defineService({
       { config: { rateLimit: policies.session } },
       async (request, reply) => {
         const session = await loadSession(request, reply).catch(() => null);
-        clearSessionCookie(reply);
-        if (!session) return { data: { endSessionUrl: null }, meta: meta(request) };
+        if (!session) {
+          clearSessionCookie(reply);
+          return { data: { endSessionUrl: null }, meta: meta(request) };
+        }
+        // A forged cross-site request must not be able to sign the user out either.
         await checkCsrf(request, session.record);
         await sessions.destroy(session.id);
+        clearSessionCookie(reply);
         await recordAudit(request, {
-          actor: { type: 'user', id: session.record.subject },
+          actor: {
+            type: 'user',
+            id: session.record.userId,
+            displayName: session.record.displayName,
+          },
           action: 'auth.signed-out',
           resource: { type: 'session', id: 'portal' },
           outcome: 'success',
@@ -535,8 +554,9 @@ export const definition = defineService({
     // ---------------------------------------------------------------- API forwarding
     const forward = async (request: FastifyRequest, reply: FastifyReply) => {
       const path = request.url;
-      const target = routeTable.find((entry) => entry.pattern.test(path))?.service;
-      if (!target || !SESSION_PATHS.test(path)) throw new AtlasError('NOT_FOUND');
+      const pathname = path.split('?')[0]!;
+      const target = routeTable.find((entry) => entry.pattern.test(pathname))?.service;
+      if (!target || !SESSION_PATHS.test(pathname)) throw new AtlasError('NOT_FOUND');
       const session = await requireSession(request, reply);
       await checkCsrf(request, session.record);
 
