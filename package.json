@@ -21,6 +21,7 @@
     "test:integration": "vitest run --project integration",
     "test:system": "vitest run --project system",
     "test:e2e": "pnpm --filter @atlas/e2e-tests test",
+    "test:e2e:stack": "pnpm --filter @atlas/e2e-tests test:stack",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "audit:deps": "pnpm audit --audit-level high",
     "dev:services": "pnpm -r --parallel --filter \"./services/**\" run dev",

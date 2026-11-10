@@ -36,9 +36,11 @@ function AuthenticatedShell() {
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[288px_1fr]">
-      <aside className="sticky top-0 hidden h-dvh border-r border-line bg-surface lg:block">
-        <Sidebar workspaces={visible} />
-      </aside>
+      <div className="hidden border-r border-line bg-surface lg:block">
+        <aside className="sticky top-0 h-dvh">
+          <Sidebar workspaces={visible} />
+        </aside>
+      </div>
 
       {drawerOpen && (
         <div

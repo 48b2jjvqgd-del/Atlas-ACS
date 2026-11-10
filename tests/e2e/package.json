@@ -8,9 +8,13 @@
   "scripts": {
     "test": "playwright test",
     "install-browsers": "playwright install --with-deps chromium",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "test:stack": "playwright test -c playwright.stack.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0"
+  },
+  "dependencies": {
+    "@atlas/contracts": "workspace:*"
   }
 }

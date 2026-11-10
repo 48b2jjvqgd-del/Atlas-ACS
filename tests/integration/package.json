@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@atlas/acs-core": "workspace:*",
+    "@atlas/api-gateway": "workspace:*",
     "@atlas/contracts": "workspace:*",
     "@atlas/database": "workspace:*",
     "@atlas/observability": "workspace:*",

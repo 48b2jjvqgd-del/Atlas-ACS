@@ -65,8 +65,8 @@ jobs:
         run: pnpm setup:env
       - name: Start infrastructure (same definitions as local development)
         run: docker compose up -d --wait postgres valkey rabbitmq
-      - name: Apply migrations
-        run: pnpm db:migrate && pnpm db:status
+      - name: Provision per-service database roles, then migrate as atlas_migrator
+        run: pnpm db:provision && pnpm db:migrate && pnpm db:status
       - name: Roll back and re-apply (rollback strategy check)
         run: pnpm db:rollback --owner issuer && pnpm db:migrate
       - run: pnpm test:integration
@@ -120,11 +120,59 @@ jobs:
         run: docker build -f infrastructure/docker/portal.Dockerfile -t atlas-acs/portal:ci .
       - name: Container starts as non-root and serves health
         run: |
-          docker run -d --name gw -p 127.0.0.1:4000:4000 -e PORT=4000 -e ATLAS_ENV=test atlas-acs/api-gateway:ci
+          # Dependencies are deliberately unreachable: the gateway must still start (lazy connections).
+          docker run -d --name gw -p 127.0.0.1:4000:4000 -e PORT=4000 -e ATLAS_ENV=test \
+            -e VALKEY_URL=redis://:x@127.0.0.1:1/0 -e RABBITMQ_URL=amqp://x:x@127.0.0.1:1 \
+            -e OIDC_ISSUER_URL=http://127.0.0.1:1/realms/atlas \
+            -e SERVICE_CLIENT_SECRET=ci-service-secret-0123456789 -e OIDC_CLIENT_SECRET=ci-gateway-secret-0123456789 \
+            -e SESSION_ENCRYPTION_KEY=0000000000000000000000000000000000000000000000000000000000000000 \
+            atlas-acs/api-gateway:ci
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:4000/health/live && break; sleep 1; done
           test "$(docker exec gw id -u)" != "0"
           docker stop -t 15 gw
           test "$(docker inspect gw --format '{{.State.ExitCode}}')" = "0"
+
+  system:
+    name: Full stack (system tests and browser journeys)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Generate ephemeral local credentials
+        run: |
+          pnpm setup:env
+          # Many scripted sign-ins come from one address in this job.
+          echo 'RATE_LIMIT_SIGN_IN_MAX=500' >> .env
+      - name: Build and start the full stack (Keycloak, Jaeger, migrations, services, portal)
+        run: docker compose --profile services up -d --build --wait
+      - name: Seed synthetic data
+        run: pnpm db:seed
+      - name: System tests (real sign-in, RBAC, tenant isolation, audit, service security, tracing)
+        run: pnpm test:system
+      - run: pnpm --filter @atlas/e2e-tests install-browsers
+      - name: Browser journeys against the running stack
+        run: pnpm test:e2e:stack
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: stage-1a-screenshots
+          path: |
+            tests/e2e/screenshots/
+            tests/e2e/playwright-report-stack/
+          retention-days: 14
+      - name: Stack logs on failure
+        if: failure()
+        run: docker compose --profile services logs --no-color --tail 300
+      - if: always()
+        run: docker compose --profile services down -v
 
   dependency-audit:
     name: Dependency audit

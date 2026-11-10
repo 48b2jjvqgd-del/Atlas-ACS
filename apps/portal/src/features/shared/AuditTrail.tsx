@@ -69,7 +69,11 @@ export function AuditTrail({
   return (
     <div className="space-y-4">
       {!compact && (
-        <div className="grid gap-3 md:grid-cols-4" role="search" aria-label="Filter audit records">
+        <div
+          className="grid gap-3 md:grid-cols-[repeat(4,1fr)_auto]"
+          role="search"
+          aria-label="Filter audit records"
+        >
           <Select
             aria-label="Action"
             value={filter.action ?? ''}
@@ -115,6 +119,9 @@ export function AuditTrail({
               })
             }
           />
+          <Button aria-label="Refresh audit records" onClick={() => void reload()}>
+            Refresh
+          </Button>
         </div>
       )}
 
@@ -122,6 +129,7 @@ export function AuditTrail({
       {state.status === 'error' && <ErrorState error={state.error} onRetry={() => void reload()} />}
       {state.status === 'loaded' && state.data.data.length === 0 && (
         <EmptyState title="No audit records">
+          {/* Records arrive asynchronously, usually within a second of the change. */}
           {pages.length > 0
             ? 'There are no older records.'
             : 'Nothing matches these filters yet. Audited actions appear here within seconds.'}

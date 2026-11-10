@@ -67,7 +67,12 @@ describe('PostgreSQL connectivity', () => {
 describe('migrations', () => {
   it('applies, reports, rolls back and re-applies owner migrations', async () => {
     const up = await migrate({ databaseUrl: testUrl, direction: 'up' });
-    expect(up.issuer?.map((m) => m.name)).toEqual(['20261106000000_create-tenant']);
+    expect(up.issuer?.map((m) => m.name)).toEqual([
+      '20261106000000_create-tenant',
+      '20261109090000_issuer-registry-foundations',
+    ]);
+    expect(up.identity?.length).toBeGreaterThan(0);
+    expect(up.audit?.length).toBeGreaterThan(0);
 
     let status = await migrationStatus(testUrl);
     expect(status.find((s) => s.schema === 'issuer')).toMatchObject({
@@ -78,7 +83,7 @@ describe('migrations', () => {
     const noop = await migrate({ databaseUrl: testUrl, direction: 'up' });
     expect(noop.issuer).toEqual([]);
 
-    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer' });
+    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer', count: 2 });
     status = await migrationStatus(testUrl);
     expect(status.find((s) => s.schema === 'issuer')?.applied).toEqual([]);
     const tableGone = await admin(async () => {
@@ -145,6 +150,6 @@ describe('migrations', () => {
       'SELECT count(*) AS count, count(*) FILTER (WHERE is_synthetic) AS synthetic FROM issuer.tenant WHERE is_synthetic',
     );
     await client.end();
-    expect(rows.rows[0]).toEqual({ count: '2', synthetic: '2' });
+    expect(rows.rows[0]).toEqual({ count: '3', synthetic: '3' });
   });
 });

@@ -10,6 +10,11 @@
       "@atlas/source": "./src/service.ts",
       "types": "./dist/service.d.ts",
       "default": "./dist/service.js"
+    },
+    "./rate-limit-store": {
+      "@atlas/source": "./src/rate-limit-store.ts",
+      "types": "./dist/rate-limit-store.d.ts",
+      "default": "./dist/rate-limit-store.js"
     }
   },
   "scripts": {
