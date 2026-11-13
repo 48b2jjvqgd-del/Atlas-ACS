@@ -5,17 +5,17 @@ identifiers are referenced by the portal's placeholders, the compliance matrix a
 changing them requires updating those references. Final stage structure approved at the Stage 0 final
 review (ADR-022).
 
-| Stage | Name                                                                  | Status                                 |
-| ----- | --------------------------------------------------------------------- | -------------------------------------- |
-| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08) |
-| 1A    | Platform security and issuer foundations                              | **Implemented — awaiting review**      |
-| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**              |
-| 2     | Fraud and decision engine                                             | Planned                                |
-| 3     | Challenge engine                                                      | Planned                                |
-| 4     | Compliance engine                                                     | Planned                                |
-| 5     | Reporting and analytics                                               | Planned                                |
-| 6     | Demonstration and performance testing                                 | Planned                                |
-| 7     | Migration, authorised scheme integration and certification            | Planned                                |
+| Stage | Name                                                                  | Status                                     |
+| ----- | --------------------------------------------------------------------- | ------------------------------------------ |
+| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)     |
+| 1A    | Platform security and issuer foundations                              | **Security remediation — awaiting review** |
+| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                  |
+| 2     | Fraud and decision engine                                             | Planned                                    |
+| 3     | Challenge engine                                                      | Planned                                    |
+| 4     | Compliance engine                                                     | Planned                                    |
+| 5     | Reporting and analytics                                               | Planned                                    |
+| 6     | Demonstration and performance testing                                 | Planned                                    |
+| 7     | Migration, authorised scheme integration and certification            | Planned                                    |
 
 Each stage is independent and has its own acceptance criteria. In particular, fraud/decisioning (2) and
 challenge (3) are **not** part of Stage 1B.
@@ -65,6 +65,20 @@ Also in 1A: a Valkey-backed rate-limit store at the gateway.
 
 Not done in 1A (deliberately): BIN ranges (1B), authentication activity views (1B), external
 anchoring of audit chain heads, session listing per user.
+
+### Stage 1A security remediation (review findings)
+
+| Item                                                    | Status                                                                                                              | Evidence                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| F1 RLS context could be widened with `set_config()`     | Fixed: database-held, set-once context (ADR-034). Documented limit: does not contain a compromised service          | `database-security.test.ts`                                |
+| F2 `is_synthetic` followed `ATLAS_ENV`                  | Fixed: always synthetic; database constraints; reserved email domains only (ADR-033)                                | `synthetic-data.test.ts`, `database-security.test.ts`      |
+| F3 permission scopes enforced only by the application   | Fixed: catalogue in the database, triggers, read-only system roles, migrator-side synchronisation (ADR-035)         | `database-security.test.ts`, `migrations.test.ts`          |
+| Gateway forwarded non-canonical paths (internal routes) | Fixed: canonical paths only, never `/internal/`                                                                     | `upstream-path.test.ts`, `service-security.test.ts`        |
+| Privilege escalation through platform administration    | Fixed: privilege ceiling, no self-change via invitations or held roles (ADR-036)                                    | `identity-escalation.test.ts`                              |
+| Promotion to platform roles did not require MFA at IdP  | Fixed: TOTP enrolment required, sessions ended (ADR-030 amendment)                                                  | `identity-escalation.test.ts`, `account-lifecycle.test.ts` |
+| Outbox reordered events after a broker outage           | Fixed: relay-level back-off; poison rows set aside                                                                  | `outbox-resilience.test.ts`                                |
+| Session fixation / sign-out at the IdP                  | Hardened: previous session destroyed at sign-in; refresh token revoked at sign-out                                  | system tests                                               |
+| Remaining limitations                                   | Listed in [SECURITY_MODEL.md](../security/SECURITY_MODEL.md#known-limitations-after-stage-1a); Stage 1B not started | —                                                          |
 
 ## Stage 1B — ACS protocol foundation and simulated Visa/Mastercard DS connectivity
 

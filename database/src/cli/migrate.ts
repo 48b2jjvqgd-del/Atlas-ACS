@@ -51,7 +51,8 @@ try {
       ...(owner ? { owner } : {}),
       ...(count ? { count } : {}),
       log: (message) => {
-        if (message.startsWith('granted')) console.log(message);
+        if (message.startsWith('granted') || message.startsWith('authorisation catalogue'))
+          console.log(message);
       },
     });
     for (const [schema, ran] of Object.entries(results)) {

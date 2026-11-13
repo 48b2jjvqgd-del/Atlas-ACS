@@ -1,6 +1,7 @@
 import { isoTimestampSchema, tenantIdSchema, z } from '@atlas/schemas';
 import { permissionScopes, permissionSchema, principalSchema, roleKeySchema } from '../../authz.js';
 import { successEnvelope } from '../envelope.js';
+import { syntheticEmailSchema } from '../../synthetic.js';
 
 /**
  * Identity, roles and permissions — identity-service (Stage 1A).
@@ -88,10 +89,8 @@ export const tenantUserSchema = userSummarySchema.extend({
 export type TenantUser = z.infer<typeof tenantUserSchema>;
 export const listTenantUsersResponseSchema = successEnvelope(z.array(tenantUserSchema));
 
-const emailInput = z
-  .email()
-  .max(254)
-  .transform((value) => value.trim().toLowerCase());
+// Stage 1A: invitations accept reserved synthetic domains only (see synthetic.ts).
+const emailInput = syntheticEmailSchema;
 
 export const inviteUserBodySchema = z
   .object({

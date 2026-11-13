@@ -98,21 +98,22 @@ Constraints are enforced in the database as well as in the API contract
 
 **issuer** (owner issuer-service)
 
-| Table                  | Purpose                   | Notes                                                                                                                                                                      |
-| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tenant`               | Issuer registry           | adds `internal_reference` (unique, `^[A-Z0-9][A-Z0-9-]{1,39}$`); lifecycle onboarding → active ⇄ suspended → offboarded (transitions enforced by the service); RLS on `id` |
-| `tenant_configuration` | Versioned issuer settings | `(tenant_id, version)` PK; `settings` jsonb validated by `issuerSettingsSchema`; immutable (trigger); RLS                                                                  |
-| `outbox`               | Transactional outbox      | relayed to RabbitMQ, published rows deleted after 7 days                                                                                                                   |
+| Table                  | Purpose                   | Notes                                                                                                                                                                                                                                  |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant`               | Issuer registry           | adds `internal_reference` (unique, `^[A-Z0-9][A-Z0-9-]{1,39}$`); lifecycle onboarding → active ⇄ suspended → offboarded (transitions enforced by the service); RLS on `id`; `is_synthetic` must be true (Stage 1A constraint, ADR-033) |
+| `tenant_configuration` | Versioned issuer settings | `(tenant_id, version)` PK; `settings` jsonb validated by `issuerSettingsSchema`; immutable (trigger); RLS; support contact email on a reserved domain (Stage 1A constraint)                                                            |
+| `outbox`               | Transactional outbox      | relayed to RabbitMQ, published rows deleted after 7 days                                                                                                                                                                               |
 
 **identity** (owner identity-service)
 
-| Table                        | Purpose                                                 | Notes                                                                                                                                                  |
-| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `role`                       | System and custom roles                                 | `scope` platform/tenant; `permissions text[]` validated against the catalogue; system roles synchronised from `@atlas/contracts` at start-up (audited) |
-| `user_account`               | ATLAS users                                             | `idp_subject` links to the IdP; status invited/active/disabled; no passwords                                                                           |
-| `platform_role_assignment`   | Platform roles                                          | composite FK guarantees only platform-scoped roles                                                                                                     |
-| `tenant_role_assignment`     | Issuer memberships and roles                            | composite FK guarantees only tenant-scoped roles; `tenant_id` by value; RLS                                                                            |
-| `idp_event_cursor`, `outbox` | Failed sign-in ingestion position; transactional outbox |                                                                                                                                                        |
+| Table                        | Purpose                                                 | Notes                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `role`                       | System and custom roles                                 | `scope` platform/tenant; `permissions text[]` checked by trigger against `permission` (known, allowed at the role's scope, no duplicates); system roles written only by the migrator (RLS), synchronised from `@atlas/contracts` (audited) |
+| `permission`                 | Permission catalogue                                    | copy of `@atlas/contracts`, written by the migration tool after every run; read-only for identity-service; a deferred trigger refuses changes that would leave a role invalid                                                              |
+| `user_account`               | ATLAS users                                             | `idp_subject` links to the IdP; status invited/active/disabled; no passwords; `is_synthetic` must be true and `email` on a reserved domain (Stage 1A constraints, ADR-033)                                                                 |
+| `platform_role_assignment`   | Platform roles                                          | composite FK guarantees only platform-scoped roles                                                                                                                                                                                         |
+| `tenant_role_assignment`     | Issuer memberships and roles                            | composite FK guarantees only tenant-scoped roles; `tenant_id` by value; RLS                                                                                                                                                                |
+| `idp_event_cursor`, `outbox` | Failed sign-in ingestion position; transactional outbox |                                                                                                                                                                                                                                            |
 
 **audit** (owner audit-service)
 
@@ -120,10 +121,25 @@ Constraints are enforced in the database as well as in the API contract
 | -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `audit_record` | Append-only audit trail | id = event id (idempotent); `sequence` identity; `chain` = tenant id or `platform`; `previous_hash`/`hash` SHA-256 chain; triggers reject UPDATE/DELETE/TRUNCATE; service role has SELECT/INSERT only; RLS (platform rows only in platform scope) |
 
-**Row-level security.** Every tenant-owned table has a policy calling `<schema>.rls_tenant_visible()`,
-which reads two transaction-local settings set by the service kit's `inScope()`:
-`atlas.scope` (`all` | `tenant`) and `atlas.tenant_ids`. With neither set, no rows are visible. Service
-roles do not own tables, so policies always apply to them.
+**Row-level security (ADR-034).** Each owning schema has a `tenant_context` table (unlogged; one row
+per backend, keyed on the transaction id) that no service role may read or write. The service kit's
+`inScope()` declares the context with `<schema>.begin_tenant_context('all' | 'tenant', tenant_ids)`
+(`SECURITY DEFINER`), at most once per transaction. Every tenant-owned table's policy reads it through
+`<schema>.tenant_context_all()` / `tenant_context_ids()`, evaluated once per statement. With no
+context declared in the current transaction, no tenant rows are visible. Session settings
+(`set_config`, `SET`) have no effect. Service roles do not own tables, so policies always apply to
+them; the migrator owns them and is not subject to RLS.
+
+| Policy-protected table              | Key         | Notes                                                     |
+| ----------------------------------- | ----------- | --------------------------------------------------------- |
+| `issuer.tenant`                     | `id`        | read and write                                            |
+| `issuer.tenant_configuration`       | `tenant_id` | read and write                                            |
+| `identity.tenant_role_assignment`   | `tenant_id` | read and write                                            |
+| `audit.audit_record`                | `tenant_id` | read; platform rows only platform-wide; insert only `all` |
+| `identity.role` (not tenant-scoped) | `is_system` | service role may write custom roles only                  |
+
+Tables without tenant data (`identity.user_account`, the assignment of platform roles, outboxes, the
+IdP cursor) are not tenant-scoped: access to them is decided by the service's authorisation.
 
 **Seeds** (`pnpm db:seed`, synthetic only): Northstar Bank (active), Meridian Financial (active) and
 Harbourline Credit Union (onboarding) with configurations; 13 users on the reserved `.test` domain
@@ -183,7 +199,8 @@ Every schema change is a versioned migration — no manual DDL, in any environme
 
 `database/seeds/development/<schema>/NNN_<name>.sql`, run with `pnpm db:seed`:
 
-- synthetic data only, flagged `is_synthetic = true`, with a `SYNTHETIC DATA ONLY` header (tested);
+- synthetic data only, flagged `is_synthetic = true`, with a `SYNTHETIC DATA ONLY` header (tested); in
+  Stage 1A the database refuses anything else anyway (ADR-033);
 - refused unless `ATLAS_ENV` is `development`, `test` or `simulation`, before any connection is opened;
 - idempotent (`ON CONFLICT DO NOTHING`), one transaction per owner;
 - never creates schema — seeds run after migrations.

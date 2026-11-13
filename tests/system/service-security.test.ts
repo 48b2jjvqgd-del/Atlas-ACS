@@ -1,5 +1,6 @@
+import { request as httpRequest } from 'node:http';
 import { describe, expect, it } from 'vitest';
-import { NORTHSTAR, signedIn } from './client.js';
+import { NORTHSTAR, PORTAL, signedIn } from './client.js';
 
 /**
  * Service-to-service security, exercised directly against each service (bypassing the gateway)
@@ -34,6 +35,25 @@ async function serviceToken(
     ...(body.access_token ? { token: body.access_token } : {}),
     ...(body.error ? { error: body.error } : {}),
   };
+}
+
+const GATEWAY = process.env.SYSTEM_TEST_GATEWAY_URL ?? 'http://127.0.0.1:4000';
+
+/** A request whose path is sent exactly as written (fetch would normalise dot segments). */
+function rawGet(base: string, path: string, headers: Record<string, string>) {
+  const url = new URL(base);
+  return new Promise<{ status: number; body: string }>((resolve, reject) => {
+    const req = httpRequest(
+      { host: url.hostname, port: url.port, path, method: 'GET', headers },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk: Buffer) => (body += chunk.toString()));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
 }
 
 const call = (base: string, path: string, headers: Record<string, string> = {}) =>
@@ -111,5 +131,27 @@ describe('service-to-service security', () => {
       authorization: `Bearer ${token.token}`,
     });
     expect(response).toMatchObject({ status: 401, body: { detail: 'User token required' } });
+  });
+
+  it('never forwards a non-canonical path to a service with the gateway’s identity', async () => {
+    // Directly at the gateway (no nginx in front to normalise the path): a signed-in issuer user
+    // tries to reach identity-service's service-only principal lookup, which accepts the gateway.
+    const user = await signedIn('support@meridian.test');
+    const host = new URL(PORTAL).host;
+    const cookie = [...user.cookies]
+      .filter(([key]) => key.startsWith(`${host}|`))
+      .map(([key, value]) => `${key.split('|')[1]}=${value}`)
+      .join('; ');
+    const subject = '5ab00000-0000-4000-8000-000000000001';
+    for (const path of [
+      `/v1/tenants/x/users/../../../internal/principals/${subject}`,
+      `/v1/tenants/x/users/%2e%2e/%2e%2e/%2e%2e/internal/principals/${subject}`,
+      `/v1/tenants/x/users/..%2f..%2f..%2finternal/principals/${subject}`,
+      `/v1/internal/principals/${subject}`,
+    ]) {
+      const response = await rawGet(GATEWAY, path, { cookie, host });
+      expect(response.status, path).toBe(404);
+      expect(response.body, path).not.toContain('super.admin@atlas.test');
+    }
   });
 });

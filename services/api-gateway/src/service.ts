@@ -35,6 +35,7 @@ import {
   tokensMatch,
   type SessionRecord,
 } from './sessions.js';
+import { forwardablePath } from './upstream-path.js';
 import { ValkeyOutbox } from './valkey-outbox.js';
 
 /**
@@ -439,6 +440,10 @@ export const definition = defineService({
         principals.invalidate(signedIn.subject);
 
         const principal = response.body.data;
+        // Session fixation: a session id the browser already held is never reused or kept alive;
+        // every sign-in gets a fresh id and the old record is destroyed.
+        const previous = parseCookies(request.headers.cookie)[cookies.session];
+        if (previous) await sessions.destroy(previous);
         const id = SessionStore.newId();
         const record = sessions.create({
           subject: signedIn.subject,
@@ -485,6 +490,18 @@ export const definition = defineService({
         await checkCsrf(request, session.record);
         await sessions.destroy(session.id);
         clearSessionCookie(reply);
+        // End the provider-side session for this client even if the browser never follows the
+        // end-session redirect below. Best effort: the local session is already gone.
+        if (session.record.refreshToken) {
+          await oidc
+            .revoke(session.record.refreshToken)
+            .catch((error: unknown) =>
+              request.log.warn(
+                { error: { name: (error as Error).name } },
+                'refresh-token revocation at sign-out failed',
+              ),
+            );
+        }
         await recordAudit(request, {
           actor: {
             type: 'user',
@@ -553,8 +570,11 @@ export const definition = defineService({
 
     // ---------------------------------------------------------------- API forwarding
     const forward = async (request: FastifyRequest, reply: FastifyReply) => {
-      const path = request.url;
-      const pathname = path.split('?')[0]!;
+      // Only canonical paths are forwarded with the gateway's service identity (upstream-path.ts).
+      const forwardable = forwardablePath(request.url);
+      if (!forwardable) throw new AtlasError('NOT_FOUND');
+      const { pathname } = forwardable;
+      const path = `${pathname}${forwardable.search}`;
       const target = routeTable.find((entry) => entry.pattern.test(pathname))?.service;
       if (!target || !SESSION_PATHS.test(pathname)) throw new AtlasError('NOT_FOUND');
       const session = await requireSession(request, reply);

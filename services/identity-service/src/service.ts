@@ -126,38 +126,25 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
       relay.start();
       context.onShutdown(() => relay.stop());
 
-      const syncRoles = async () => {
-        await inScope(pool, systemScope, async (client) => {
-          const changed = await repo.synchroniseSystemRoles(client);
-          for (const change of changed) {
-            await audit.record(client, `system-sync-${Date.now()}`, {
-              actor: { type: 'system', id: 'identity-service' },
-              action: 'role.permissions.synchronised',
-              resource: { type: 'role', id: change.key },
-              outcome: 'success',
-              changes: [
-                {
-                  field: 'permissions',
-                  before: change.before.join(' '),
-                  after: change.after.join(' '),
-                },
-              ],
-              reason: 'System role definitions synchronised from the permission catalogue',
-            });
-          }
-          if (changed.length > 0)
-            logger.info({ roles: changed.map((c) => c.key) }, 'system roles synchronised');
-        });
-      };
-      let syncTimer: NodeJS.Timeout | undefined;
-      const trySync = () => {
-        syncRoles().catch(() => {
-          syncTimer = setTimeout(trySync, 5_000);
-          syncTimer.unref();
-        });
-      };
-      trySync();
-      context.onShutdown(async () => clearTimeout(syncTimer));
+      // System roles and the permission catalogue are written by the migration tool from
+      // @atlas/contracts (database/src/catalogue.ts); row-level security stops this service from
+      // changing system roles at all. The service only verifies the copy it reads, and reports
+      // not-ready while it differs from the catalogue this build was compiled with.
+      let reportedDrift = '';
+      context.readiness.register('authorisation-catalogue', async () => {
+        const drift = await repo.catalogueDrift(pool);
+        const summary = drift.join(', ');
+        if (summary !== reportedDrift) {
+          reportedDrift = summary;
+          if (drift.length > 0)
+            logger.error({ drift }, 'authorisation catalogue differs from @atlas/contracts');
+        }
+        if (drift.length > 0) {
+          throw Object.assign(new Error('authorisation catalogue drift'), {
+            code: 'CATALOGUE_DRIFT',
+          });
+        }
+      });
 
       if (idp && config.IDP_EVENT_POLL_INTERVAL_MS > 0) {
         const stop = startIdpEventIngestion({
@@ -171,6 +158,87 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
       }
 
       const actorId = (request: FastifyRequest) => request.principal!.userId;
+      const actorOf = (request: FastifyRequest) => ({
+        type: 'user' as const,
+        id: actorId(request),
+        displayName: request.principal!.displayName,
+      });
+
+      /** Refuses (and audits) a change that would hand out or remove privileges the caller lacks. */
+      async function denyEscalation(
+        request: FastifyRequest,
+        reason: 'privilege-ceiling' | 'self-change',
+        detail: string,
+        tenantId?: string,
+      ): Promise<never> {
+        await audit
+          .recordDetached(pool, request.correlationId, {
+            actor: actorOf(request),
+            ...(tenantId ? { tenantId } : {}),
+            action: 'access.denied',
+            resource: {
+              type: 'api-route',
+              id: `${request.method} ${request.routeOptions.url ?? 'unmatched'}`.slice(0, 128),
+            },
+            outcome: 'denied',
+            metadata: { reason, method: request.method },
+          })
+          .catch((error: unknown) =>
+            request.log.error({ error }, 'failed to record access-denied event'),
+          );
+        throw new AtlasError(reason === 'self-change' ? 'CONFLICT' : 'FORBIDDEN', { detail });
+      }
+
+      /**
+       * Privilege ceiling for platform administration: a caller may grant, remove, define or
+       * otherwise act on platform privileges only within the permissions they hold platform-wide
+       * themselves. A holder of a narrow custom role with platform.users.manage can therefore not
+       * make anyone (including a second account of their own) a Platform Super Admin, nor demote
+       * or disable someone more privileged than they are.
+       */
+      async function assertWithinCeiling(
+        request: FastifyRequest,
+        permissions: Iterable<string>,
+        what: string,
+      ) {
+        const held = new Set<string>(request.principal!.platformPermissions);
+        const missing = [...new Set(permissions)].filter((p) => !held.has(p)).sort();
+        if (missing.length > 0) {
+          await denyEscalation(
+            request,
+            'privilege-ceiling',
+            `${what} needs permissions you do not hold: ${missing.join(', ')}`,
+          );
+        }
+      }
+
+      async function permissionsOfRoles(client: PoolClient, roles: Iterable<string>) {
+        const permissions = new Set<string>();
+        for (const key of roles) {
+          for (const permission of (await repo.findRole(client, key))?.permissions ?? [])
+            permissions.add(permission);
+        }
+        return permissions;
+      }
+
+      /**
+       * A user newly given platform-wide roles must have a second factor: platform permissions are
+       * honoured only for sign-ins with one (applyMfaPolicy), so without this the promotion would be
+       * unusable — and the account would never be asked to enrol. Returns true when enrolment had to
+       * be required, in which case the user's existing sessions are ended after commit so the next
+       * sign-in goes through enrolment.
+       */
+      async function requireSecondFactorFor(row: { id: string; idp_subject: string | null }) {
+        if (!row.idp_subject) return false;
+        if (!idp) {
+          logger.warn(
+            { userId: row.id },
+            'platform roles granted but no identity-provider admin is configured to require a second factor',
+          );
+          return false;
+        }
+        return idp.requireSecondFactor(row.idp_subject);
+      }
 
       // ---------------------------------------------------------- service-only
       app.get(
@@ -256,6 +324,7 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
             });
           }
           const permissions = [...new Set(body.permissions)].sort();
+          await assertWithinCeiling(request, permissions, 'Defining this role');
           const role = await inScope(pool, systemScope, async (client) => {
             try {
               await repo.insertRole(client, { ...body, permissions });
@@ -308,6 +377,18 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
               });
             }
             const permissions = [...new Set(body.permissions)].sort();
+            const held =
+              request.principal!.platformRoles.includes(roleKey) ||
+              request.principal!.tenants.some((t) => t.roles.includes(roleKey));
+            if (held) {
+              await denyEscalation(request, 'self-change', 'You cannot change a role you hold');
+            }
+            // Both what the role grants now and what it will grant must be within the ceiling.
+            await assertWithinCeiling(
+              request,
+              [...existing.permissions, ...permissions],
+              'Changing this role',
+            );
             await repo.updateRole(client, roleKey, { ...body, permissions });
             const changes = diffFields(
               {
@@ -357,17 +438,33 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
         },
         async (request, reply) => {
           const body = request.body as z.infer<typeof inviteUserBodySchema>;
+          let endSessionsOf: string | null = null;
           const user = await inScope(pool, systemScope, async (client) => {
             await assertRolesHaveScope(client, body.roles, 'platform');
+            await assertWithinCeiling(
+              request,
+              await permissionsOfRoles(client, body.roles),
+              'Granting these roles',
+            );
+            const existing = await repo.findUserByEmail(client, body.email);
+            if (existing?.id === actorId(request)) {
+              await denyEscalation(request, 'self-change', 'You cannot change your own roles');
+            }
+            if (existing) {
+              await assertWithinCeiling(
+                request,
+                await permissionsOfRoles(client, await repo.platformRolesOf(client, existing.id)),
+                'Changing this user',
+              );
+            }
             const { row, invited } = await ensureLocalUser(client, body, true);
             const before = await repo.platformRolesOf(client, row.id);
             const roles = [...new Set([...before, ...body.roles])].sort();
             await repo.replacePlatformRoles(client, row.id, roles, actorId(request));
-            const actor = {
-              type: 'user' as const,
-              id: actorId(request),
-              displayName: request.principal!.displayName,
-            };
+            const secondFactorRequired =
+              !invited && before.length === 0 && (await requireSecondFactorFor(row));
+            if (secondFactorRequired) endSessionsOf = row.idp_subject;
+            const actor = actorOf(request);
             if (invited) {
               await audit.record(client, request.correlationId, {
                 actor,
@@ -390,9 +487,11 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
                   after: roles.join(' '),
                 },
               ],
+              ...(secondFactorRequired ? { metadata: { secondFactorRequired: true } } : {}),
             });
             return { ...repo.toUserSummary(row), roles };
           });
+          if (idp && endSessionsOf) await idp.endSessions(endSessionsOf).catch(() => undefined);
           reply.status(201);
           return { data: user, meta: meta(request) };
         },
@@ -410,12 +509,19 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
           if (userId === actorId(request)) {
             throw new AtlasError('CONFLICT', { detail: 'You cannot change your own roles' });
           }
+          let endSessionsOf: string | null = null;
           const result = await inScope(pool, systemScope, async (client) => {
             const user = await repo.findUser(client, userId);
             if (!user) throw new AtlasError('NOT_FOUND');
             await assertRolesHaveScope(client, roles, 'platform');
             const before = await repo.platformRolesOf(client, userId);
             const after = [...new Set(roles)].sort();
+            // The caller must hold everything the user has now and everything granted.
+            await assertWithinCeiling(
+              request,
+              await permissionsOfRoles(client, [...before, ...after]),
+              'Changing these roles',
+            );
             if (
               before.includes('platform-super-admin') &&
               !after.includes('platform-super-admin')
@@ -427,12 +533,12 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
               }
             }
             await repo.replacePlatformRoles(client, userId, after, actorId(request));
+            const secondFactorRequired =
+              before.length === 0 && after.length > 0 && (await requireSecondFactorFor(user));
+            if (secondFactorRequired) endSessionsOf = user.idp_subject;
             await audit.record(client, request.correlationId, {
-              actor: {
-                type: 'user',
-                id: actorId(request),
-                displayName: request.principal!.displayName,
-              },
+              actor: actorOf(request),
+              ...(secondFactorRequired ? { metadata: { secondFactorRequired: true } } : {}),
               action: 'user.platform-roles.changed',
               resource: { type: 'user', id: userId, name: user.email },
               outcome: 'success',
@@ -446,6 +552,7 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
             });
             return { ...repo.toUserSummary(user), roles: after };
           });
+          if (idp && endSessionsOf) await idp.endSessions(endSessionsOf).catch(() => undefined);
           return { data: result, meta: meta(request) };
         },
       );
@@ -473,6 +580,11 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
             const tenants = await repo.tenantsOf(client, userId);
             if (platformRoles.length > 0 || tenants.length === 0) {
               await request.authorize('platform.users.manage');
+              await assertWithinCeiling(
+                request,
+                await permissionsOfRoles(client, platformRoles),
+                'Changing this user',
+              );
               if (body.status === 'disabled' && platformRoles.includes('platform-super-admin')) {
                 if ((await repo.countActiveSuperAdmins(client, userId)) === 0) {
                   throw new AtlasError('CONFLICT', {
@@ -547,6 +659,15 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
           await assertTenantAcceptsUsers(tenantId, request.correlationId);
           const user = await inScope(pool, tenantScope(tenantId), async (client) => {
             await assertRolesHaveScope(client, body.roles, 'tenant');
+            const existing = await repo.findUserByEmail(client, body.email);
+            if (existing?.id === actorId(request)) {
+              await denyEscalation(
+                request,
+                'self-change',
+                'You cannot change your own roles',
+                tenantId,
+              );
+            }
             const { row, invited } = await ensureLocalUser(client, body, false);
             const before = await repo.tenantRolesOf(client, row.id, tenantId);
             const roles = [...new Set([...before, ...body.roles])].sort();
@@ -707,7 +828,6 @@ export function createIdentityService(dependencies: IdentityServiceDependencies 
           email: body.email,
           displayName: body.displayName,
           subject,
-          isSynthetic: config.ATLAS_ENV !== 'production' && config.ATLAS_ENV !== 'staging',
         });
         if (idp && subject) {
           const sent = await idp.sendInvitation(subject, platform);

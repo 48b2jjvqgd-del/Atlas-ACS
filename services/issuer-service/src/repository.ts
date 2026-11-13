@@ -78,12 +78,14 @@ export async function findTenant(
 
 export async function insertTenant(
   client: Queryable,
-  tenant: { slug: string; displayName: string; internalReference: string; isSynthetic: boolean },
+  tenant: { slug: string; displayName: string; internalReference: string },
 ): Promise<TenantSummary> {
+  // Stage 1A: every issuer is synthetic — not configurable, and enforced by a database constraint
+  // (tenant_stage_1a_synthetic_only). See ADR-033.
   const result = await client.query<TenantRow>(
     `INSERT INTO issuer.tenant (slug, display_name, internal_reference, status, is_synthetic)
-     VALUES ($1, $2, $3, 'onboarding', $4) RETURNING ${columns}`,
-    [tenant.slug, tenant.displayName, tenant.internalReference, tenant.isSynthetic],
+     VALUES ($1, $2, $3, 'onboarding', true) RETURNING ${columns}`,
+    [tenant.slug, tenant.displayName, tenant.internalReference],
   );
   return toTenant(result.rows[0]!);
 }

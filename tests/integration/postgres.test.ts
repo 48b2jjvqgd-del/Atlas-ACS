@@ -70,6 +70,8 @@ describe('migrations', () => {
     expect(up.issuer?.map((m) => m.name)).toEqual([
       '20261106000000_create-tenant',
       '20261109090000_issuer-registry-foundations',
+      '20261113090000_tenant-context-hardening',
+      '20261113091000_stage-1a-synthetic-only',
     ]);
     expect(up.identity?.length).toBeGreaterThan(0);
     expect(up.audit?.length).toBeGreaterThan(0);
@@ -83,7 +85,7 @@ describe('migrations', () => {
     const noop = await migrate({ databaseUrl: testUrl, direction: 'up' });
     expect(noop.issuer).toEqual([]);
 
-    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer', count: 2 });
+    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer', count: 4 });
     status = await migrationStatus(testUrl);
     expect(status.find((s) => s.schema === 'issuer')?.applied).toEqual([]);
     const tableGone = await admin(async () => {
@@ -146,10 +148,13 @@ describe('migrations', () => {
     await runSeeds({ databaseUrl: testUrl, environment: 'test' });
     const client = new pg.Client({ connectionString: testUrl });
     await client.connect();
-    const rows = await client.query<{ count: string; synthetic: string }>(
-      'SELECT count(*) AS count, count(*) FILTER (WHERE is_synthetic) AS synthetic FROM issuer.tenant WHERE is_synthetic',
+    const rows = await client.query<{ seeded: string; count: string; synthetic: string }>(
+      `SELECT count(*) FILTER (WHERE slug IN ('northstar-bank', 'meridian-financial', 'harbourline-credit-union')) AS seeded,
+              count(*) AS count, count(*) FILTER (WHERE is_synthetic) AS synthetic FROM issuer.tenant`,
     );
     await client.end();
-    expect(rows.rows[0]).toEqual({ count: '3', synthetic: '3' });
+    expect(rows.rows[0]!.seeded).toBe('3');
+    // Stage 1A: every issuer is synthetic, including ones inserted without saying so.
+    expect(rows.rows[0]!.synthetic).toBe(rows.rows[0]!.count);
   });
 });

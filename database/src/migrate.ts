@@ -3,6 +3,7 @@ import { runner } from 'node-pg-migrate';
 import pg from 'pg';
 import { MIGRATIONS_TABLE } from './constants.js';
 import { discoverMigrationOwners, type MigrationOwner } from './owners.js';
+import { synchroniseAuthorisationCatalogue } from './catalogue.js';
 import { applyServiceGrants } from './roles.js';
 
 export { MIGRATIONS_TABLE };
@@ -18,6 +19,11 @@ export interface MigrateOptions {
   count?: number;
   /** Re-apply per-service grants afterwards (default true). See roles.ts. */
   grants?: boolean;
+  /**
+   * Synchronise the authorisation catalogue and system roles from @atlas/contracts afterwards
+   * (default true). See catalogue.ts.
+   */
+  catalogue?: boolean;
   log?: (message: string) => void;
 }
 
@@ -59,11 +65,14 @@ export async function migrate(options: MigrateOptions): Promise<Record<string, R
       verbose: false,
     });
   }
-  if (options.grants ?? true) {
+  const grants = options.grants ?? true;
+  const catalogue = options.catalogue ?? true;
+  if (grants || catalogue) {
     const client = new pg.Client({ connectionString: options.databaseUrl });
     await client.connect();
     try {
-      await applyServiceGrants(client, options.log);
+      if (grants) await applyServiceGrants(client, options.log);
+      if (catalogue) await synchroniseAuthorisationCatalogue(client, options.log);
     } finally {
       await client.end();
     }

@@ -91,7 +91,13 @@ export class PortalUser {
       page = await this.submit(html, { otp: await freshCode(email) });
     }
     if (page.status !== 302) throw new SignInRefused(await page.text());
-    const callback = await this.raw(page.headers.get('location')!);
+    const next = page.headers.get('location')!;
+    // A pending required action (e.g. TOTP enrolment) redirects to the provider's own page, not
+    // back to the gateway: the sign-in has not completed.
+    if (!next.includes('/api/v1/auth/callback')) {
+      throw new SignInRefused(await (await this.raw(next)).text());
+    }
+    const callback = await this.raw(next);
     const target = callback.headers.get('location') ?? '';
     await this.session();
     return target;

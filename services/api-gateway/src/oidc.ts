@@ -42,6 +42,8 @@ export interface OidcClient {
   refresh(
     refreshToken: string,
   ): Promise<Omit<OidcTokens, 'amr' | 'subject' | 'idpSessionId'> & { idToken: string | null }>;
+  /** Revokes a refresh token at the provider (back-channel), ending that client session there. */
+  revoke(refreshToken: string): Promise<void>;
   endSessionUrl(idToken: string | null): string;
   /** Account console where users manage their password and second factor. */
   accountUrl: string;
@@ -130,6 +132,9 @@ export function createOidcClient(settings: OidcSettings): OidcClient {
         idToken: tokens.id_token ?? null,
         expiresAt: Date.now() + (tokens.expires_in ?? 60) * 1000,
       };
+    },
+    async revoke(refreshToken) {
+      await client.tokenRevocation(config, refreshToken, { token_type_hint: 'refresh_token' });
     },
     endSessionUrl(idToken) {
       return client.buildEndSessionUrl(config, {

@@ -14,6 +14,12 @@ import type { Queryable } from './scope.js';
  * rows wait and are retried with back-off; nothing is lost. Delivery is at-least-once, so
  * consumers deduplicate by event id.
  *
+ * Ordering: rows are published oldest first. A failed publish backs off the *relay* (exponential,
+ * capped), not the row, so after a broker outage events still leave in commit order. Only a row
+ * that keeps failing while others succeed (POISON_ATTEMPTS) is set aside with its own back-off, so
+ * it cannot block the outbox forever; such rows are logged with their attempt count. Consumers must
+ * still not depend on order across services (each producer has its own outbox).
+ *
  * The trace context active at enqueue time is stored with the row, so the published event
  * continues the trace of the request that caused it.
  */
@@ -46,8 +52,13 @@ export interface OutboxRelayOptions {
   retentionMs?: number;
 }
 
+/** After this many failed attempts a row gets its own back-off instead of holding up the outbox. */
+export const POISON_ATTEMPTS = 5;
+const MAX_RELAY_BACKOFF_MS = 30_000;
+
 export class OutboxRelay {
   #timer: NodeJS.Timeout | undefined;
+  #failures = 0;
   #running: Promise<void> | undefined;
   #stopped = false;
   #lastCleanup = 0;
@@ -72,7 +83,12 @@ export class OutboxRelay {
         .finally(() => {
           this.#running = undefined;
           if (!this.#stopped) {
-            this.#timer = setTimeout(tick, this.options.intervalMs ?? 250);
+            const interval = this.options.intervalMs ?? 250;
+            const delay =
+              this.#failures === 0
+                ? interval
+                : Math.min(interval * 2 ** Math.min(this.#failures, 10), MAX_RELAY_BACKOFF_MS);
+            this.#timer = setTimeout(tick, delay);
             this.#timer.unref();
           }
         });
@@ -128,9 +144,15 @@ export class OutboxRelay {
             [row.id],
           );
           published += 1;
+          this.#failures = 0;
           this.options.metrics?.outboxRelayed.inc({ outcome: 'published' });
         } catch (error) {
-          const backoffSeconds = Math.min(2 ** Math.min(row.attempts, 8), 300);
+          this.#failures += 1;
+          const attempts = row.attempts + 1;
+          // The broker is most likely unavailable: the relay backs off and the row stays first in
+          // line. Only a row that has failed repeatedly is set aside, so it cannot block the rest.
+          const backoffSeconds =
+            attempts >= POISON_ATTEMPTS ? Math.min(2 ** Math.min(attempts, 8), 300) : 0;
           await client.query(
             `UPDATE ${this.#table}
                 SET attempts = attempts + 1, last_error = $2,
@@ -140,10 +162,10 @@ export class OutboxRelay {
           );
           this.options.metrics?.outboxRelayed.inc({ outcome: 'failed' });
           this.options.logger.warn(
-            { eventId: row.id, attempts: row.attempts + 1, retryInSeconds: backoffSeconds },
+            { eventId: row.id, attempts, setAsideSeconds: backoffSeconds },
             'outbox publish failed; will retry',
           );
-          break; // broker likely unavailable: stop this batch, keep ordering
+          break; // stop this batch; the next cycle starts from the oldest pending row again
         }
       }
       await client.query('COMMIT');

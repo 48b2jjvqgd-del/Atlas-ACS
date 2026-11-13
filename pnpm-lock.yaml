@@ -618,18 +618,30 @@ importers:
       '@atlas/api-gateway':
         specifier: workspace:*
         version: link:../../services/api-gateway
+      '@atlas/audit-service':
+        specifier: workspace:*
+        version: link:../../services/audit-service
       '@atlas/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
       '@atlas/database':
         specifier: workspace:*
         version: link:../../database
+      '@atlas/identity-service':
+        specifier: workspace:*
+        version: link:../../services/identity-service
+      '@atlas/issuer-service':
+        specifier: workspace:*
+        version: link:../../services/issuer-service
       '@atlas/observability':
         specifier: workspace:*
         version: link:../../packages/observability
       '@atlas/service-kit':
         specifier: workspace:*
         version: link:../../packages/service-kit
+      '@atlas/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       ioredis:
         specifier: ^6.0.0
         version: 6.0.0

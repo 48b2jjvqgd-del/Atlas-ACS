@@ -1,5 +1,6 @@
 import { isoTimestampSchema, tenantIdSchema, tenantSlugSchema, z } from '@atlas/schemas';
 import { successEnvelope } from '../envelope.js';
+import { isSyntheticEmail, syntheticEmailMessage } from '../../synthetic.js';
 
 /**
  * Issuer registry — issuer-service (Stage 1A).
@@ -78,7 +79,13 @@ export const issuerSettingsSchema = z.object({
     .string()
     .regex(/^[a-z]{2}-[A-Z]{2}$/)
     .default('en-GB'),
-  supportContactEmail: z.email().max(254).nullable().default(null),
+  // Stage 1A: reserved synthetic domains only (see synthetic.ts).
+  supportContactEmail: z
+    .email()
+    .max(254)
+    .refine((value) => isSyntheticEmail(value.toLowerCase()), syntheticEmailMessage)
+    .nullable()
+    .default(null),
   supportContactPhone: z
     .string()
     .regex(/^\+?[0-9 ()-]{6,24}$/)

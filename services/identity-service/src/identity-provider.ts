@@ -21,6 +21,12 @@ export interface IdentityProviderAdmin {
   /** Emails the user the actions to complete their account. Failures are reported, not thrown. */
   sendInvitation(subject: string, requireMfa: boolean): Promise<boolean>;
   setEnabled(subject: string, enabled: boolean): Promise<void>;
+  /**
+   * Makes sure the account has, or must enrol at next sign-in, a second factor (TOTP). Returns true
+   * when enrolment had to be required (the account had no second factor yet). Used when a user is
+   * given platform-wide roles after being invited without them.
+   */
+  requireSecondFactor(subject: string): Promise<boolean>;
   /** Ends every session the user has at the provider. */
   endSessions(subject: string): Promise<void>;
   /** Failed sign-in events since `sinceMs` (epoch ms), oldest first. */
@@ -168,6 +174,36 @@ export function createKeycloakAdmin(options: {
           detail: `Account update failed (${response.status})`,
         });
       }
+    },
+    async requireSecondFactor(subject) {
+      const path = `/users/${encodeURIComponent(subject)}`;
+      const credentials = await admin(`${path}/credentials`);
+      if (!credentials.ok) {
+        throw new AtlasError('DEPENDENCY_UNAVAILABLE', {
+          detail: `Account lookup failed (${credentials.status})`,
+        });
+      }
+      const types = ((await credentials.json()) as { type?: string }[]).map((c) => c.type);
+      if (types.includes('otp')) return false;
+      const user = await admin(path);
+      if (!user.ok) {
+        throw new AtlasError('DEPENDENCY_UNAVAILABLE', {
+          detail: `Account lookup failed (${user.status})`,
+        });
+      }
+      const current = ((await user.json()) as { requiredActions?: string[] }).requiredActions ?? [];
+      if (!current.includes('CONFIGURE_TOTP')) {
+        const updated = await admin(path, {
+          method: 'PUT',
+          body: JSON.stringify({ requiredActions: [...current, 'CONFIGURE_TOTP'] }),
+        });
+        if (updated.status !== 204) {
+          throw new AtlasError('DEPENDENCY_UNAVAILABLE', {
+            detail: `Account update failed (${updated.status})`,
+          });
+        }
+      }
+      return true;
     },
     async endSessions(subject) {
       await admin(`/users/${encodeURIComponent(subject)}/logout`, { method: 'POST' });

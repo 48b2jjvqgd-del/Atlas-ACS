@@ -1,6 +1,8 @@
 import {
   isPermission,
   permissionAllowsScope,
+  permissionCatalog,
+  permissionKeys,
   systemRoles,
   type Permission,
   type PermissionScope,
@@ -101,47 +103,39 @@ export async function updateRole(
 }
 
 /**
- * Brings system roles in line with the contracts catalogue. Returns the roles that changed, so
- * the change can be audited.
+ * Differences between the authorisation catalogue in the database and the one this build was
+ * compiled with (@atlas/contracts). The migration tool writes the database copy; an empty result
+ * means they agree. Entries are short identifiers only, safe to log.
  */
-export async function synchroniseSystemRoles(
-  client: Queryable,
-): Promise<{ key: string; before: string[]; after: string[] }[]> {
-  const changed: { key: string; before: string[]; after: string[] }[] = [];
-  for (const [key, definition] of Object.entries(systemRoles)) {
-    const existing = await client.query<{
-      permissions: string[];
-      name: string;
-      description: string;
-    }>(
-      'SELECT permissions, name, description FROM identity.role WHERE key = $1 AND is_system FOR UPDATE',
-      [key],
-    );
-    const desired = [...definition.permissions].sort();
-    const current = existing.rows[0];
-    if (!current) {
-      await client.query(
-        `INSERT INTO identity.role (key, scope, name, description, is_system, permissions)
-         VALUES ($1, $2, $3, $4, true, $5)`,
-        [key, definition.scope, definition.name, definition.description, desired],
-      );
-      changed.push({ key, before: [], after: desired });
-      continue;
-    }
-    const before = [...current.permissions].sort();
-    if (
-      before.join(',') !== desired.join(',') ||
-      current.name !== definition.name ||
-      current.description !== definition.description
-    ) {
-      await client.query(
-        'UPDATE identity.role SET permissions = $2, name = $3, description = $4 WHERE key = $1',
-        [key, desired, definition.name, definition.description],
-      );
-      if (before.join(',') !== desired.join(',')) changed.push({ key, before, after: desired });
-    }
+export async function catalogueDrift(client: Queryable): Promise<string[]> {
+  const drift: string[] = [];
+  const stored = await client.query<{ key: string; scopes: string[] }>(
+    'SELECT key, scopes FROM identity.permission',
+  );
+  const storedPermissions = new Map(stored.rows.map((row) => [row.key, [...row.scopes].sort()]));
+  for (const key of permissionKeys) {
+    const expected = [...permissionCatalog[key].scopes].sort().join(',');
+    if (storedPermissions.get(key)?.join(',') !== expected) drift.push(`permission:${key}`);
+    storedPermissions.delete(key);
   }
-  return changed;
+  for (const key of storedPermissions.keys()) drift.push(`permission:${key}`);
+
+  const roles = await client.query<{ key: string; scope: string; permissions: string[] }>(
+    'SELECT key, scope, permissions FROM identity.role WHERE is_system',
+  );
+  const storedRoles = new Map(roles.rows.map((row) => [row.key, row]));
+  for (const [key, definition] of Object.entries(systemRoles)) {
+    const row = storedRoles.get(key);
+    if (
+      !row ||
+      row.scope !== definition.scope ||
+      [...row.permissions].sort().join(',') !== [...definition.permissions].sort().join(',')
+    )
+      drift.push(`role:${key}`);
+    storedRoles.delete(key);
+  }
+  for (const key of storedRoles.keys()) drift.push(`role:${key}`);
+  return drift;
 }
 
 // ---------------------------------------------------------------- principals
@@ -235,13 +229,15 @@ export async function findUserByEmail(
 
 export async function insertUser(
   client: Queryable,
-  user: { email: string; displayName: string; subject: string | null; isSynthetic: boolean },
+  user: { email: string; displayName: string; subject: string | null },
 ): Promise<UserRow> {
+  // Stage 1A: every user is synthetic — not configurable, and enforced by a database constraint
+  // (user_account_stage_1a_synthetic_only). See ADR-033.
   const result = await client.query<UserRow>(
     `INSERT INTO identity.user_account AS u (email, display_name, idp_subject, status, is_synthetic)
-     VALUES ($1, $2, $3, 'invited', $4)
+     VALUES ($1, $2, $3, 'invited', true)
      RETURNING ${userColumns}`,
-    [user.email, user.displayName, user.subject, user.isSynthetic],
+    [user.email, user.displayName, user.subject],
   );
   return result.rows[0]!;
 }

@@ -43,7 +43,9 @@ No component depends on a particular cloud provider.
 - Every setting is an environment variable documented in [`.env.example`](../.env.example) and
   [CONVENTIONS.md](architecture/CONVENTIONS.md#configuration).
 - Configuration is validated at startup; a misconfigured service refuses to start and names the keys.
-- `ATLAS_ENV` must be set explicitly (`staging`/`production` disable synthetic seeding).
+- `ATLAS_ENV` must be set explicitly (`staging`/`production` disable synthetic seeding). It does not
+  make records non-synthetic: in Stage 1A the database refuses non-synthetic issuers and users in every
+  environment (ADR-033).
 - Compose files are local-development artefacts; a company environment uses its own deployment
   descriptors in `infrastructure/deployment/<target>/`.
 

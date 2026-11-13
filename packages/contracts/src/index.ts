@@ -1,5 +1,6 @@
 export * from './services.js';
 export * from './authz.js';
+export * from './synthetic.js';
 export * from './http/headers.js';
 export * from './http/problem.js';
 export * from './http/envelope.js';

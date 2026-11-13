@@ -1,5 +1,11 @@
 import { createHash } from 'node:crypto';
-import type { ActivityRecorded, AuditQuery, AuditRecord, EventEnvelope } from '@atlas/contracts';
+import {
+  activityRecordedV1,
+  type ActivityRecorded,
+  type AuditQuery,
+  type AuditRecord,
+  type EventEnvelope,
+} from '@atlas/contracts';
 import type { Queryable } from '@atlas/service-kit';
 
 /**
@@ -54,6 +60,12 @@ export async function appendRecord(
   event: EventEnvelope<ActivityRecorded>,
 ): Promise<boolean> {
   const data = event.data;
+  // Only registered producers may write the audit trail. (The broker account is shared in Stage 1A,
+  // so this does not authenticate the producer — see SECURITY_MODEL.md, "Known limitations".)
+  const sourceService = serviceFromSource(event.source);
+  if (!(activityRecordedV1.producers as readonly string[]).includes(sourceService)) {
+    throw new Error(`audit event from an unregistered producer: ${sourceService.slice(0, 64)}`);
+  }
   const tenantId = data.tenantId ?? null;
   const chain = chainOf(tenantId);
   await client.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`audit-chain:${chain}`]);
@@ -76,7 +88,7 @@ export async function appendRecord(
     resource: data.resource,
     outcome: data.outcome,
     correlationId: event.correlationid,
-    sourceService: serviceFromSource(event.source),
+    sourceService,
     changes: data.changes ?? null,
     metadata: data.metadata ?? null,
     reason: data.reason ?? null,

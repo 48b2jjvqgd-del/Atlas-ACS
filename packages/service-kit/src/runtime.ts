@@ -105,6 +105,9 @@ export async function createService<TShape extends z.ZodRawShape>(
       url: config.DATABASE_URL,
       applicationName: connectionName,
       logger,
+      ...(catalogue.dataStores.postgresSchema
+        ? { tenantContextSchema: catalogue.dataStores.postgresSchema }
+        : {}),
     });
     readiness.register('postgres', infrastructure.postgres.check);
   }

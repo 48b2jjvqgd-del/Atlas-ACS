@@ -130,8 +130,6 @@ export const definition = defineService({
               slug: body.slug,
               displayName: body.displayName,
               internalReference: body.internalReference,
-              // Outside controlled environments every issuer is synthetic by definition.
-              isSynthetic: !['staging', 'production'].includes(context.config.ATLAS_ENV),
             });
           } catch (error) {
             if (isUniqueViolation(error, 'tenant_slug_key')) {

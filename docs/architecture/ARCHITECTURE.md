@@ -88,19 +88,29 @@ sequenceDiagram
   participant A as audit-service
   B->>N: GET /api/v1/tenants (session cookie)
   N->>G: GET /v1/tenants
-  G->>G: load session (Valkey), refresh token if near expiry, CSRF on writes
+  G->>G: load session (Valkey), refresh token if near expiry, CSRF on writes, canonical path only
   G->>K: client credentials, scope aud-issuer-service (cached)
   G->>S: Bearer service token + x-atlas-user-token
   S->>S: verify both tokens (JWKS), caller allowed on route?
   S->>I: resolve principal (service token, cached ≤10 s)
-  S->>S: authorise permission + tenant, query in RLS scope
+  S->>S: authorise permission + tenant, begin_tenant_context() once, query under RLS
   S-->>B: 200 (via gateway)
   Note over S,A: on a change: audit event in the same DB transaction (outbox) → relay → RabbitMQ → audit-service (hash chain)
 ```
 
 Key decisions: backend-for-frontend sessions (ADR-024), database roles (ADR-025), identity-service as
 system of record for authorisation (ADR-026), service tokens per callee (ADR-027), audit pipeline
-(ADR-028), trace backend (ADR-029), MFA for platform permissions (ADR-030).
+(ADR-028), trace backend (ADR-029), MFA for platform permissions (ADR-030). Security remediation:
+synthetic-only records (ADR-033), database-held tenant context (ADR-034), database-enforced permission
+scopes (ADR-035), privilege ceiling for platform administration (ADR-036).
+
+**Where each control lives.** The gateway only forwards canonical portal paths (never `/internal/`
+routes, dot segments or encoded separators), because it calls services with its own service identity.
+Services make every authorisation decision. The database then enforces, independently of service code:
+tenant row visibility (RLS), the permission-scope rules and read-only system roles, synthetic-only
+records, append-only audit and immutable configuration versions. The database guarantees hold against
+query mistakes and SQL injection within a request; they do not hold against a fully compromised service
+process using its own credentials, except where noted (SECURITY_MODEL.md, "Tenant isolation").
 
 ## Services and responsibilities
 

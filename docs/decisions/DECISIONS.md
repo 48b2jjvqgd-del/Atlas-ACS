@@ -307,7 +307,8 @@ company DBA's role scheme; grants cannot drift from ownership. **Alternative:** 
 **Decision.** The IdP authenticates; identity-service stores users, roles, permissions and issuer
 memberships and resolves a principal per request (cached ≤ 10 s in each service). Role or group claims
 in tokens are not used. Users are provisioned at the IdP by identity-service through the Keycloak Admin
-API, with an emailed invitation; ATLAS never handles passwords.
+API, with an emailed invitation; ATLAS never handles passwords. System roles and the permission catalogue are
+synchronised into the database by the migration tool, not by the running service (ADR-035).
 
 **Why.** Tenant memberships and fine-grained permissions belong to ATLAS, change often and must be
 audited; keeping them out of tokens means changes apply within seconds rather than at token renewal, and
@@ -352,6 +353,12 @@ accounts). The IdP reports the methods used in `amr` (configured AMR references 
 gateway and every service ignore platform-wide permissions when `amr` lacks a second factor
 (`PLATFORM_MFA_REQUIRED`, default true). Issuer users may enrol optionally.
 
+**Amended (security remediation).** Granting platform roles to an existing account (an issuer user
+promoted, or an invitation that matches an existing account) now also requires TOTP enrolment at the
+identity provider when the account has no second factor, and ends the account's provider sessions, so
+the next sign-in goes through enrolment. Until then the account holds no platform permission (the
+`amr` rule above), so the promotion fails closed.
+
 ### ADR-031 Event contracts may have several producers — _Proposed_
 
 **Decision.** `defineEvent` accepts `producers` (still accepts a single `producer`); publishers must be
@@ -364,3 +371,81 @@ issuer they belong to). The denial is recorded on the platform audit chain with 
 metadata, not in the target issuer's own trail.
 
 **Why.** Existence is not disclosed, and one issuer's auditors never see another issuer's users.
+
+## Stage 1A security remediation decisions (proposed, for review)
+
+### ADR-033 Stage 1A stores synthetic records only, enforced by the database — _Proposed_
+
+**Decision.** Every issuer and every user is synthetic in Stage 1A, whatever `ATLAS_ENV` says. Services
+always write `is_synthetic = true`; `CHECK` constraints (`tenant_stage_1a_synthetic_only`,
+`user_account_stage_1a_synthetic_only`) refuse anything else for every role, including the migrator;
+user email addresses and issuer support contacts must use reserved domains (RFC 2606 / 6761:
+`*.test`, `*.example`, `*.invalid`, `*.localhost`, `example.com/.net/.org`), checked by the contracts and
+by constraints that use the same pattern text (`syntheticEmailDomainPattern`).
+
+**Why.** Previously `is_synthetic` followed `ATLAS_ENV`, so a deployment labelled staging or
+production would silently have created "real" records with no production controls in place.
+**Alternative rejected:** an environment variable or flag that permits real records — one
+misconfiguration away from real personal data in a system that is not ready for it.
+
+**How real records will be introduced (future, not Stage 1A).** Only through a reviewed change that
+(1) is recorded as a new ADR naming the stage and the environments concerned; (2) ships a migration
+that replaces these constraints with a rule tied to a controlled data-classification attribute, rather
+than dropping them, together with the controls real data needs — retention and deletion, DPIA and
+records of processing, access review, encryption at rest, backup handling and breach procedures
+(SECURITY_MODEL.md, "Future requirements"); (3) introduces an explicit, audited operator action for
+creating a non-synthetic issuer or user (never a default); and (4) keeps synthetic and real data
+separable for reporting and deletion. The synthetic constraints stay in every database used for
+development, test and simulation.
+
+### ADR-034 Row-level-security context held by the database, set once per transaction — _Proposed_
+
+**Decision.** `inScope()` declares the tenant context with `<schema>.begin_tenant_context(scope,
+tenant_ids)`, a `SECURITY DEFINER` function that records it in `<schema>.tenant_context`, keyed on the
+backend and the transaction id, and refuses a second declaration in the same transaction. Policies read
+the context through `SECURITY DEFINER` accessors. The service role has no privilege on the table, and the
+session settings `atlas.scope` / `atlas.tenant_ids` are no longer read by anything.
+
+**Why.** Any role can change a custom setting with `set_config()`, so the previous design could be
+widened by one injected expression inside a tenant-scoped query: it guarded only against forgetting a
+tenant predicate. The new context cannot be changed by the statements running inside it and cannot
+outlive its transaction on a pooled connection.
+
+**Limits, stated plainly.** Code holding the service's database credentials and able to run its own
+transactions (a compromised service process) can still declare platform-wide scope, because the service
+legitimately does so for platform administrators, relays and consumers. Closing that needs the database
+to verify a credential the service cannot mint, which is not achievable in Stage 1A without changing the
+architecture. **Options for production (not chosen yet):** separate deployables (and database roles) for
+platform-wide and tenant-scoped work, so a tenant-facing process has no role that can declare `all`;
+or a context signed by a component the service does not control (e.g. the gateway) and verified in the
+database. **Costs accepted:** every scoped transaction is assigned a transaction id (more xid
+consumption, a write to an unlogged table); the context table is not replicated to standbys, so read
+replicas would need a different mechanism.
+
+### ADR-035 The database enforces permission scopes and protects system roles — _Proposed_
+
+**Decision.** `@atlas/contracts` remains the only definition of permissions, scopes and system roles.
+The migration tool copies it into `identity.permission` and the system roles after every run
+(`database/src/catalogue.ts`, audited through the identity outbox). Triggers refuse any role permission
+that is unknown, duplicated or not allowed at the role's scope, and any catalogue change that would
+leave a role in that state; row-level security on `identity.role` makes system roles read-only for the
+service role. identity-service no longer writes system roles at start-up; it verifies that the database
+matches the catalogue it was built with and is not ready otherwise.
+
+**Why.** The documentation claimed a database constraint that did not exist; a direct write with the
+identity-service credentials could have placed platform-only permissions in an issuer role.
+**Alternative rejected:** a hand-maintained SQL list of permissions — a second catalogue that would
+drift from the contracts.
+
+### ADR-036 Privilege ceiling and no self-change for platform administration — _Proposed_
+
+**Decision.** A caller may grant or remove platform roles, change the status of a platform user, or
+create or change a role only within the permissions they hold platform-wide themselves; nobody may
+change a role they hold; "inviting" one's own email address is treated as changing one's own roles and
+refused. Refusals are audited (`access.denied`, reason `privilege-ceiling` or `self-change`).
+
+**Why.** Without it, any holder of `platform.users.manage` (for example a narrow custom role) could
+make a second account Platform Super Admin, and any holder of `platform.roles.manage` could add
+permissions to a role they hold. Platform Super Admins are unaffected. **Not applied to issuer roles:**
+issuer user managers assign any issuer role within their issuer by design (ADR-026); they still cannot
+change their own roles.

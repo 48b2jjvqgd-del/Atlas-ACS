@@ -51,6 +51,17 @@ export function serviceRoles(): ServiceRole[] {
     }));
 }
 
+/**
+ * Tables a service role must not get the schema-wide grant on, and what it gets instead:
+ *   tenant_context   row-level-security context; written only through begin_tenant_context()
+ *                    (SECURITY DEFINER), so a service cannot widen its own tenant scope.
+ *   permission       authorisation catalogue; synchronised by the migrator, read-only for services.
+ */
+export const restrictedTables: Readonly<Record<string, Readonly<Record<string, string | null>>>> = {
+  '*': { tenant_context: null },
+  identity: { permission: 'SELECT' },
+};
+
 const ident = (value: string) => pg.escapeIdentifier(value);
 const literal = (value: string) => pg.escapeLiteral(value);
 
@@ -176,6 +187,15 @@ export async function applyServiceGrants(
     await client.query(`GRANT EXECUTE ON ALL FUNCTIONS IN SCHEMA ${s} TO ${r}`);
     if (profile === 'append-only') {
       await client.query(`REVOKE UPDATE, DELETE, TRUNCATE ON ALL TABLES IN SCHEMA ${s} FROM ${r}`);
+    }
+    const restricted = { ...restrictedTables['*'], ...restrictedTables[schema] };
+    for (const [table, privileges] of Object.entries(restricted)) {
+      const present = await client.query('SELECT to_regclass($1) AS present', [
+        `${schema}.${table}`,
+      ]);
+      if (!present.rows[0]?.present) continue;
+      await client.query(`REVOKE ALL ON ${s}.${ident(table)} FROM ${r}`);
+      if (privileges) await client.query(`GRANT ${privileges} ON ${s}.${ident(table)} TO ${r}`);
     }
     // Migration history belongs to the migrator alone.
     const history = await client.query('SELECT to_regclass($1) AS present', [

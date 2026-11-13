@@ -60,7 +60,11 @@ describe('identity-service', () => {
     const service = await start();
     const response = await service.app.inject({ method: 'GET', url: '/health/ready' });
     const body = readinessResponseSchema.parse(response.json());
-    expect(body.checks.map((check) => check.name).sort()).toEqual(['postgres', 'rabbitmq']);
+    expect(body.checks.map((check) => check.name).sort()).toEqual([
+      'authorisation-catalogue',
+      'postgres',
+      'rabbitmq',
+    ]);
     expect(response.statusCode).toBe(503);
   });
 

@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { systemRoles } from '@atlas/contracts';
+import { permissionKeys, syntheticEmailDomainPattern, systemRoles } from '@atlas/contracts';
 import {
   databaseRoot,
   discoverMigrationOwners,
@@ -106,6 +106,36 @@ describe('identity catalogue consistency', () => {
     );
     for (const [, value] of raw.matchAll(/"(?:secret|value)":\s*"([^"]*)"/g))
       expect(value).toMatch(/^\$\{[A-Z0-9_:./-]+\}$/);
+  });
+});
+
+describe('Stage 1A security remediation invariants', () => {
+  const read = (schema: string, file: string) =>
+    readFileSync(join(databaseRoot, 'migrations', schema, file), 'utf8');
+
+  it('uses the contracts synthetic email pattern verbatim in the database constraints', () => {
+    for (const schema of ['issuer', 'identity']) {
+      expect(read(schema, '20261113091000_stage-1a-synthetic-only.sql')).toContain(
+        `~ '${syntheticEmailDomainPattern}'`,
+      );
+    }
+  });
+
+  it('accepts every contracts permission key in the database catalogue', () => {
+    const sql = read('identity', '20261113092000_permission-scope-enforcement.sql');
+    const format = /permission_key_format CHECK \(key ~ '([^']+)'\)/.exec(sql)?.[1];
+    expect(format).toBeDefined();
+    for (const key of permissionKeys) expect(key).toMatch(new RegExp(format!));
+  });
+
+  it('leaves no row-level-security policy reading a session setting', () => {
+    for (const schema of ['issuer', 'identity', 'audit']) {
+      const sql = read(schema, '20261113090000_tenant-context-hardening.sql');
+      const up = sql.slice(0, sql.indexOf('-- Down Migration'));
+      expect(up).toContain(`DROP FUNCTION ${schema}.rls_tenant_visible(uuid);`);
+      expect(up).not.toMatch(/current_setting\(/);
+      expect(up).toMatch(/SECURITY DEFINER SET search_path = pg_catalog, pg_temp/);
+    }
   });
 });
 

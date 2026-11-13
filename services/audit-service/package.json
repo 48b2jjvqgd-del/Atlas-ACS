@@ -10,6 +10,11 @@
       "@atlas/source": "./src/service.ts",
       "types": "./dist/service.d.ts",
       "default": "./dist/service.js"
+    },
+    "./store": {
+      "@atlas/source": "./src/store.ts",
+      "types": "./dist/store.d.ts",
+      "default": "./dist/store.js"
     }
   },
   "scripts": {

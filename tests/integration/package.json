@@ -11,10 +11,14 @@
   "dependencies": {
     "@atlas/acs-core": "workspace:*",
     "@atlas/api-gateway": "workspace:*",
+    "@atlas/audit-service": "workspace:*",
     "@atlas/contracts": "workspace:*",
     "@atlas/database": "workspace:*",
+    "@atlas/identity-service": "workspace:*",
+    "@atlas/issuer-service": "workspace:*",
     "@atlas/observability": "workspace:*",
     "@atlas/service-kit": "workspace:*",
+    "@atlas/shared": "workspace:*",
     "ioredis": "^6.0.0",
     "pg": "^8.23.1"
   },
