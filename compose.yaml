@@ -92,8 +92,10 @@ services:
     restart: unless-stopped
     hostname: atlas-rabbitmq
     environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-atlas}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?run pnpm setup:env}
+      # Not RABBITMQ_DEFAULT_*: the broker ignores those when it loads definitions at boot.
+      # The healthcheck (ensure-user.sh) creates this user instead.
+      ATLAS_RABBITMQ_USER: ${RABBITMQ_USER:-atlas}
+      ATLAS_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?run pnpm setup:env}
     ports:
       - '127.0.0.1:5672:5672'
       - '127.0.0.1:15672:15672'
@@ -102,8 +104,9 @@ services:
       - ./infrastructure/docker/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
       - ./infrastructure/docker/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-atlas.conf:ro
       - ./infrastructure/docker/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./infrastructure/docker/rabbitmq/ensure-user.sh:/usr/local/bin/atlas-ensure-user:ro
     healthcheck:
-      test: ['CMD', 'rabbitmq-diagnostics', '-q', 'check_port_connectivity']
+      test: ['CMD', 'sh', '/usr/local/bin/atlas-ensure-user']
       interval: 10s
       timeout: 10s
       retries: 20

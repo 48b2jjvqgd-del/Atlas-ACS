@@ -1,4 +1,5 @@
 {
+  "vhosts": [{ "name": "/" }],
   "exchanges": [
     {
       "name": "atlas.events.unrouted",
