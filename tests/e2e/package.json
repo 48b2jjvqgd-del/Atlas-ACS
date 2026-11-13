@@ -6,10 +6,10 @@
   "license": "UNLICENSED",
   "type": "module",
   "scripts": {
-    "test": "playwright test",
+    "test": "NODE_OPTIONS=--conditions=@atlas/source playwright test",
     "install-browsers": "playwright install --with-deps chromium",
     "typecheck": "tsc -p tsconfig.json",
-    "test:stack": "playwright test -c playwright.stack.config.ts"
+    "test:stack": "NODE_OPTIONS=--conditions=@atlas/source playwright test -c playwright.stack.config.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0"
