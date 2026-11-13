@@ -62,6 +62,17 @@ export function Sidebar({
         ))}
       </div>
 
+      <div className="px-3 pb-2">
+        <NavLink
+          to="/account"
+          onClick={onNavigate}
+          className={({ isActive }) =>
+            `flex items-center gap-3 rounded-lg px-3 py-2 text-sm ${isActive ? 'bg-accent-soft text-ink' : 'text-ink-muted hover:bg-surface-hover hover:text-ink'}`
+          }
+        >
+          <Icon name="account" className="size-[18px] opacity-80" /> Account and security
+        </NavLink>
+      </div>
       <div className="border-t border-line px-5 py-4 text-[11px] leading-5 text-ink-subtle">
         <p className="flex items-center gap-1.5 font-medium text-ink-muted">
           <Icon name="shield" className="size-3.5" /> Non-production build

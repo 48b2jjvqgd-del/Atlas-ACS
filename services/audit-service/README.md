@@ -1,6 +1,8 @@
 # Audit Service (`audit-service`)
 
-> **Stage 0 status:** skeleton only — infrastructure endpoints, no domain logic.
+> **Stage 1A status:** implemented — consumes `atlas.platform.activity-recorded.v1` (retry, dead-letter,
+> idempotent), stores an append-only SHA-256 hash chain per issuer plus a platform chain, serves the
+> trail (platform and per issuer) and chain verification. Routes: `packages/contracts/src/http/v1/audit.ts`.
 
 ## Responsibilities
 

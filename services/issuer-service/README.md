@@ -1,6 +1,8 @@
 # Issuer Service (`issuer-service`)
 
-> **Stage 0 status:** skeleton only — infrastructure endpoints, no domain logic.
+> **Stage 1A status:** implemented — issuer registry (`/v1/tenants`), lifecycle transitions, versioned
+> configuration with optimistic concurrency, internal tenant lookup for identity-service; audited through
+> the transactional outbox; row-level security. Routes and permissions: `packages/contracts/src/http/v1/issuer.ts`.
 
 ## Responsibilities
 

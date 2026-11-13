@@ -5,6 +5,8 @@ import { defineConfig } from 'vitest/config';
  *  - unit:        fast, hermetic tests. No network, no infrastructure. Runs on every PR.
  *  - smoke:       spawns every service as a real OS process and probes it. No infrastructure.
  *  - integration: requires PostgreSQL, Valkey and RabbitMQ (docker compose or CI service containers).
+ *  - system:      requires the full running stack (pnpm stack:up && pnpm db:seed): real Keycloak
+ *                 sign-in through the portal origin, every service, Jaeger.
  *
  * Playwright E2E tests live in tests/e2e and are run by Playwright, not Vitest.
  */
@@ -43,6 +45,16 @@ export default defineConfig({
           name: 'integration',
           include: ['tests/integration/**/*.test.ts'],
           testTimeout: 30_000,
+          hookTimeout: 60_000,
+          fileParallelism: false,
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'system',
+          include: ['tests/system/**/*.test.ts'],
+          testTimeout: 60_000,
           hookTimeout: 60_000,
           fileParallelism: false,
         },

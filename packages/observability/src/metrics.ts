@@ -1,4 +1,4 @@
-import { collectDefaultMetrics, Histogram, Registry } from '@prometheus-io/client';
+import { collectDefaultMetrics, Counter, Histogram, Registry } from '@prometheus-io/client';
 
 /**
  * Prometheus metrics convention.
@@ -11,6 +11,12 @@ import { collectDefaultMetrics, Histogram, Registry } from '@prometheus-io/clien
 export interface ServiceMetrics {
   registry: Registry;
   httpRequestDuration: Histogram<'method' | 'route' | 'status_code'>;
+  /** Access-control denials, by reason (forbidden, tenant-not-accessible, ...). */
+  accessDenied: Counter<'reason'>;
+  /** Events consumed, by event type and outcome (acked, retried, dead-lettered). */
+  messagesConsumed: Counter<'event_type' | 'outcome'>;
+  /** Outbox relay results, by outcome (published, failed). */
+  outboxRelayed: Counter<'outcome'>;
 }
 
 export function createServiceMetrics(service: string): ServiceMetrics {
@@ -26,5 +32,24 @@ export function createServiceMetrics(service: string): ServiceMetrics {
     registers: [registry],
   });
 
-  return { registry, httpRequestDuration };
+  const accessDenied = new Counter({
+    name: 'atlas_access_denied_total',
+    help: 'Requests denied by access control after authentication, by reason',
+    labelNames: ['reason'] as const,
+    registers: [registry],
+  });
+  const messagesConsumed = new Counter({
+    name: 'atlas_messages_consumed_total',
+    help: 'Events consumed, by event type and outcome (acked, retried, dead-lettered)',
+    labelNames: ['event_type', 'outcome'] as const,
+    registers: [registry],
+  });
+  const outboxRelayed = new Counter({
+    name: 'atlas_outbox_relayed_total',
+    help: 'Transactional outbox relay results, by outcome',
+    labelNames: ['outcome'] as const,
+    registers: [registry],
+  });
+
+  return { registry, httpRequestDuration, accessDenied, messagesConsumed, outboxRelayed };
 }

@@ -19,7 +19,10 @@ function required(name: string): string {
 }
 
 export const infrastructure = {
-  databaseUrl: required('DATABASE_URL'),
+  /** Administrative connection: creates throwaway databases and roles for tests. */
+  databaseUrl: process.env.DATABASE_ADMIN_URL
+    ? required('DATABASE_ADMIN_URL')
+    : required('DATABASE_URL'),
   valkeyUrl: required('VALKEY_URL'),
   rabbitmqUrl: required('RABBITMQ_URL'),
 };

@@ -1,7 +1,8 @@
 # Data model
 
-> Stage 0 defines **ownership and principles**, and one table (`issuer.tenant`). The ACS data model is
-> designed stage by stage, not up front.
+> Stage 0 defined **ownership and principles**. Stage 1A adds the issuer registry, identity and audit
+> schemas, per-service database roles and row-level security. The ACS data model is designed stage by
+> stage, not up front.
 
 ## Ownership boundaries
 
@@ -40,12 +41,11 @@ The single-instance, schema-per-service layout is a local and early-stage conven
 [ADR-012](../decisions/DECISIONS.md#adr-012-schema-per-service-in-one-postgresql-instance)). Moving an
 owner to a dedicated database requires only a different `DATABASE_URL`.
 
-### Mandatory gate: per-service credentials and restricted permissions
+### Mandatory gate: per-service credentials and restricted permissions — _implemented in Stage 1A_
 
-Stage 0 uses a single local PostgreSQL role for every service and for migrations. This is accepted
-**only** while no service holds sensitive data. Before any sensitive domain functionality is built —
-cardholder data, authentication transactions or decisions, fraud rules, identity and permission data,
-or audit records — the following must be implemented and tested (scheduled for Stage 1A):
+Stage 0 used a single local PostgreSQL role. Stage 1A implements the gate below
+([`database/src/roles.ts`](../../database/src/roles.ts), ADR-025) and proves it in
+[`tests/integration/database-security.test.ts`](../../tests/integration/database-security.test.ts):
 
 | Role                                                                  | Privileges                                                                                                                                                           |
 | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -60,7 +60,24 @@ or audit records — the following must be implemented and tested (scheduled for
   role automatically.
 - Integration tests prove that each service role is denied access to every other service's schema.
 
-## What exists in Stage 0
+How it works:
+
+1. `pnpm db:provision` (administrative connection, `DATABASE_ADMIN_URL`) creates or updates
+   `atlas_migrator` and the `atlas_<service>` roles with passwords from the environment, revokes
+   `CREATE` on `public` and database access from `PUBLIC`, and hands existing service schemas to the
+   migrator. Roles are `NOSUPERUSER NOCREATEDB NOCREATEROLE NOBYPASSRLS`, with a connection limit and
+   statement/idle timeouts.
+2. `pnpm db:migrate` runs as `atlas_migrator` and then re-applies grants derived from the service
+   catalogue (`applyServiceGrants`), including default privileges for future tables. Migration files
+   never mention roles or passwords, so a DBA can map them onto a company role scheme.
+3. Each service connects with its own URL (`<SERVICE>_DATABASE_URL` locally; `DATABASE_URL` /
+   `DATABASE_URL_FILE` in containers). Runtime services never receive migrator or admin credentials.
+4. Connections support TLS through the URL (`sslmode=verify-full&sslrootcert=...`); local development
+   uses plain TCP on loopback.
+
+## What exists
+
+### Stage 0
 
 `issuer.tenant` — the tenancy foundation
 ([migration](../../database/migrations/issuer/20261106000000_create-tenant.sql)):
@@ -77,12 +94,65 @@ or audit records — the following must be implemented and tested (scheduled for
 Constraints are enforced in the database as well as in the API contract
 ([`tenantSummarySchema`](../../packages/contracts/src/http/v1/issuer.ts)).
 
+### Stage 1A
+
+**issuer** (owner issuer-service)
+
+| Table                  | Purpose                   | Notes                                                                                                                                                                                                                                  |
+| ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tenant`               | Issuer registry           | adds `internal_reference` (unique, `^[A-Z0-9][A-Z0-9-]{1,39}$`); lifecycle onboarding → active ⇄ suspended → offboarded (transitions enforced by the service); RLS on `id`; `is_synthetic` must be true (Stage 1A constraint, ADR-033) |
+| `tenant_configuration` | Versioned issuer settings | `(tenant_id, version)` PK; `settings` jsonb validated by `issuerSettingsSchema`; immutable (trigger); RLS; support contact email on a reserved domain (Stage 1A constraint)                                                            |
+| `outbox`               | Transactional outbox      | relayed to RabbitMQ, published rows deleted after 7 days                                                                                                                                                                               |
+
+**identity** (owner identity-service)
+
+| Table                        | Purpose                                                 | Notes                                                                                                                                                                                                                                      |
+| ---------------------------- | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `role`                       | System and custom roles                                 | `scope` platform/tenant; `permissions text[]` checked by trigger against `permission` (known, allowed at the role's scope, no duplicates); system roles written only by the migrator (RLS), synchronised from `@atlas/contracts` (audited) |
+| `permission`                 | Permission catalogue                                    | copy of `@atlas/contracts`, written by the migration tool after every run; read-only for identity-service; a deferred trigger refuses changes that would leave a role invalid                                                              |
+| `user_account`               | ATLAS users                                             | `idp_subject` links to the IdP; status invited/active/disabled; no passwords; `is_synthetic` must be true and `email` on a reserved domain (Stage 1A constraints, ADR-033)                                                                 |
+| `platform_role_assignment`   | Platform roles                                          | composite FK guarantees only platform-scoped roles                                                                                                                                                                                         |
+| `tenant_role_assignment`     | Issuer memberships and roles                            | composite FK guarantees only tenant-scoped roles; `tenant_id` by value; RLS                                                                                                                                                                |
+| `idp_event_cursor`, `outbox` | Failed sign-in ingestion position; transactional outbox |                                                                                                                                                                                                                                            |
+
+**audit** (owner audit-service)
+
+| Table          | Purpose                 | Notes                                                                                                                                                                                                                                             |
+| -------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `audit_record` | Append-only audit trail | id = event id (idempotent); `sequence` identity; `chain` = tenant id or `platform`; `previous_hash`/`hash` SHA-256 chain; triggers reject UPDATE/DELETE/TRUNCATE; service role has SELECT/INSERT only; RLS (platform rows only in platform scope) |
+
+**Row-level security (ADR-034).** Each owning schema has a `tenant_context` table (unlogged; one row
+per backend, keyed on the transaction id) that no service role may read or write. The service kit's
+`inScope()` declares the context with `<schema>.begin_tenant_context('all' | 'tenant', tenant_ids)`
+(`SECURITY DEFINER`), at most once per transaction. Every tenant-owned table's policy reads it through
+`<schema>.tenant_context_all()` / `tenant_context_ids()`, evaluated once per statement. With no
+context declared in the current transaction, no tenant rows are visible. Session settings
+(`set_config`, `SET`) have no effect. Service roles do not own tables, so policies always apply to
+them; the migrator owns them and is not subject to RLS.
+
+| Policy-protected table              | Key         | Notes                                                     |
+| ----------------------------------- | ----------- | --------------------------------------------------------- |
+| `issuer.tenant`                     | `id`        | read and write                                            |
+| `issuer.tenant_configuration`       | `tenant_id` | read and write                                            |
+| `identity.tenant_role_assignment`   | `tenant_id` | read and write                                            |
+| `audit.audit_record`                | `tenant_id` | read; platform rows only platform-wide; insert only `all` |
+| `identity.role` (not tenant-scoped) | `is_system` | service role may write custom roles only                  |
+
+Tables without tenant data (`identity.user_account`, the assignment of platform roles, outboxes, the
+IdP cursor) are not tenant-scoped: access to them is decided by the service's authorisation.
+
+**Seeds** (`pnpm db:seed`, synthetic only): Northstar Bank (active), Meridian Financial (active) and
+Harbourline Credit Union (onboarding) with configurations; 13 users on the reserved `.test` domain
+covering every system role, linked to the local Keycloak realm. A unit test checks every seeded
+identity exists in the realm file and that seeds contain no real-looking card numbers.
+
 ## Modelling principles for future stages
 
 - **Tenant scoping.** Every tenant-owned row carries `tenant_id uuid NOT NULL`, is indexed on it, and is
   queried only with a tenant predicate supplied by the authenticated context (see
-  [SECURITY_MODEL.md](../security/SECURITY_MODEL.md#tenant-isolation)). PostgreSQL row-level security
-  will be added as defence in depth.
+  [SECURITY_MODEL.md](../security/SECURITY_MODEL.md)), and is protected by row-level security as above.
+- **BIN ranges** (Stage 1B) will be an `issuer.bin_range` table (tenant-scoped, RLS, non-overlapping
+  ranges per scheme), holding **synthetic/test ranges only**.
 - **Identifiers** are UUIDs generated by the owner; natural keys (slugs, BINs) are unique constraints, not
   primary keys.
 - **Time** is `timestamptz`, stored in UTC.
@@ -129,7 +199,8 @@ Every schema change is a versioned migration — no manual DDL, in any environme
 
 `database/seeds/development/<schema>/NNN_<name>.sql`, run with `pnpm db:seed`:
 
-- synthetic data only, flagged `is_synthetic = true`, with a `SYNTHETIC DATA ONLY` header (tested);
+- synthetic data only, flagged `is_synthetic = true`, with a `SYNTHETIC DATA ONLY` header (tested); in
+  Stage 1A the database refuses anything else anyway (ADR-033);
 - refused unless `ATLAS_ENV` is `development`, `test` or `simulation`, before any connection is opened;
 - idempotent (`ON CONFLICT DO NOTHING`), one transaction per owner;
 - never creates schema — seeds run after migrations.

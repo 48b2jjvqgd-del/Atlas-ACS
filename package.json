@@ -19,11 +19,14 @@
     "test:watch": "vitest --project unit",
     "test:smoke": "vitest run --project smoke",
     "test:integration": "vitest run --project integration",
+    "test:system": "vitest run --project system",
     "test:e2e": "pnpm --filter @atlas/e2e-tests test",
+    "test:e2e:stack": "pnpm --filter @atlas/e2e-tests test:stack",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test && pnpm build",
     "audit:deps": "pnpm audit --audit-level high",
     "dev:services": "pnpm -r --parallel --filter \"./services/**\" run dev",
     "dev:portal": "pnpm --filter @atlas/portal dev",
+    "db:provision": "pnpm --filter @atlas/database migrate provision-roles",
     "db:migrate": "pnpm --filter @atlas/database migrate up",
     "db:rollback": "pnpm --filter @atlas/database migrate down",
     "db:status": "pnpm --filter @atlas/database migrate status",
@@ -31,7 +34,9 @@
     "infra:up": "docker compose up -d --wait",
     "infra:down": "docker compose down",
     "stack:up": "docker compose --profile services up -d --build --wait",
-    "stack:down": "docker compose --profile services --profile identity down"
+    "stack:down": "docker compose --profile services --profile identity down",
+    "identity:reset": "node scripts/identity-reset.mjs",
+    "demo:credentials": "node scripts/demo-credentials.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

@@ -1,7 +1,9 @@
 # Architecture
 
-> Stage 0 implements the structure below as running service skeletons. Responsibilities describe the
-> **intended** design; no domain logic exists yet. See the per-service READMEs in `services/*`.
+> Stage 0 implemented the structure below as running service skeletons. Stage 1A implements the
+> platform services — api-gateway, identity-service, issuer-service and audit-service — and the
+> security, messaging and observability foundations they share. The authentication-path services are
+> still skeletons (Stage 1B onwards).
 
 ## Overview
 
@@ -68,26 +70,65 @@ flowchart LR
   CORE & CHAL --- RD
 ```
 
-Solid arrows are synchronous calls (planned); dotted arrows are asynchronous events. In Stage 0 the only
-implemented inter-service call is the gateway's health aggregation (`GET /v1/platform/services`).
+Solid arrows are synchronous calls; dotted arrows are asynchronous events. Implemented in Stage 1A:
+portal → gateway → identity/issuer/audit, identity ↔ issuer, issuer/audit → identity, the services' →
+Keycloak (tokens, keys, user administration), and identity/issuer/gateway → RabbitMQ → audit.
+
+## Stage 1A request flow
+
+```mermaid
+sequenceDiagram
+  participant B as Browser (portal)
+  participant N as nginx
+  participant G as api-gateway (BFF)
+  participant K as Keycloak
+  participant S as issuer-service
+  participant I as identity-service
+  participant Q as RabbitMQ
+  participant A as audit-service
+  B->>N: GET /api/v1/tenants (session cookie)
+  N->>G: GET /v1/tenants
+  G->>G: load session (Valkey), refresh token if near expiry, CSRF on writes, canonical path only
+  G->>K: client credentials, scope aud-issuer-service (cached)
+  G->>S: Bearer service token + x-atlas-user-token
+  S->>S: verify both tokens (JWKS), caller allowed on route?
+  S->>I: resolve principal (service token, cached ≤10 s)
+  S->>S: authorise permission + tenant, begin_tenant_context() once, query under RLS
+  S-->>B: 200 (via gateway)
+  Note over S,A: on a change: audit event in the same DB transaction (outbox) → relay → RabbitMQ → audit-service (hash chain)
+```
+
+Key decisions: backend-for-frontend sessions (ADR-024), database roles (ADR-025), identity-service as
+system of record for authorisation (ADR-026), service tokens per callee (ADR-027), audit pipeline
+(ADR-028), trace backend (ADR-029), MFA for platform permissions (ADR-030). Security remediation:
+synthetic-only records (ADR-033), database-held tenant context (ADR-034), database-enforced permission
+scopes (ADR-035), privilege ceiling for platform administration (ADR-036).
+
+**Where each control lives.** The gateway only forwards canonical portal paths (never `/internal/`
+routes, dot segments or encoded separators), because it calls services with its own service identity.
+Services make every authorisation decision. The database then enforces, independently of service code:
+tenant row visibility (RLS), the permission-scope rules and read-only system roles, synthetic-only
+records, append-only audit and immutable configuration versions. The database guarantees hold against
+query mistakes and SQL injection within a request; they do not hold against a fully compromised service
+process using its own credentials, except where noted (SECURITY_MODEL.md, "Tenant isolation").
 
 ## Services and responsibilities
 
-| Service              | Domain         | Responsibility (target)                                                                                | Owns                                                 |
-| -------------------- | -------------- | ------------------------------------------------------------------------------------------------------ | ---------------------------------------------------- |
-| `api-gateway`        | edge           | Portal entry point: CORS, rate limiting, secure headers, (Stage 1A) session authentication and routing | Valkey prefix `atlas:api-gateway:` (reserved)        |
-| `acs-core`           | authentication | Orchestrates the 3DS transaction lifecycle; scheme-agnostic                                            | `acs` schema, Valkey `atlas:acs-core:`               |
-| `protocol`           | authentication | EMV 3DS message parsing/validation, version negotiation; stateless                                     | —                                                    |
-| `visa-adapter`       | scheme         | Visa Secure specifics and DS connectivity                                                              | —                                                    |
-| `mastercard-adapter` | scheme         | Mastercard Identity Check specifics and DS connectivity                                                | —                                                    |
-| `fraud-engine`       | risk           | Issuer-configurable rules; risk assessment                                                             | `fraud` schema                                       |
-| `compliance-engine`  | risk           | SCA exemptions, scheme/regulatory checks                                                               | `compliance` schema                                  |
-| `challenge-engine`   | authentication | Challenge sessions; authentication-method providers                                                    | `challenge` schema, Valkey `atlas:challenge-engine:` |
-| `issuer-service`     | platform       | Tenant (issuer) registry and issuer configuration                                                      | `issuer` schema                                      |
-| `cardholder-service` | platform       | Cardholder enrolment and registered methods                                                            | `cardholder` schema                                  |
-| `identity-service`   | platform       | Portal users, roles, permissions; OIDC integration                                                     | `identity` schema                                    |
-| `reporting-service`  | insight        | Read-optimised projections from events                                                                 | `reporting` schema                                   |
-| `audit-service`      | insight        | Append-only, tamper-evident audit trail                                                                | `audit` schema                                       |
+| Service              | Domain         | Responsibility (target)                                                                       | Owns                                                          |
+| -------------------- | -------------- | --------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| `api-gateway`        | edge           | Portal backend-for-frontend: OIDC sign-in, sessions, CSRF, rate limiting, routing to services | Valkey prefix `atlas:api-gateway:` (sessions, limits, outbox) |
+| `acs-core`           | authentication | Orchestrates the 3DS transaction lifecycle; scheme-agnostic                                   | `acs` schema, Valkey `atlas:acs-core:`                        |
+| `protocol`           | authentication | EMV 3DS message parsing/validation, version negotiation; stateless                            | —                                                             |
+| `visa-adapter`       | scheme         | Visa Secure specifics and DS connectivity                                                     | —                                                             |
+| `mastercard-adapter` | scheme         | Mastercard Identity Check specifics and DS connectivity                                       | —                                                             |
+| `fraud-engine`       | risk           | Issuer-configurable rules; risk assessment                                                    | `fraud` schema                                                |
+| `compliance-engine`  | risk           | SCA exemptions, scheme/regulatory checks                                                      | `compliance` schema                                           |
+| `challenge-engine`   | authentication | Challenge sessions; authentication-method providers                                           | `challenge` schema, Valkey `atlas:challenge-engine:`          |
+| `issuer-service`     | platform       | Tenant (issuer) registry and issuer configuration                                             | `issuer` schema                                               |
+| `cardholder-service` | platform       | Cardholder enrolment and registered methods                                                   | `cardholder` schema                                           |
+| `identity-service`   | platform       | Portal users, roles, permissions; OIDC integration                                            | `identity` schema                                             |
+| `reporting-service`  | insight        | Read-optimised projections from events                                                        | `reporting` schema                                            |
+| `audit-service`      | insight        | Append-only, tamper-evident audit trail                                                       | `audit` schema                                                |
 
 The service catalogue in [`packages/contracts/src/services.ts`](../../packages/contracts/src/services.ts) is
 the single source of truth for names, default ports and owned data stores; a unit test asserts that no
@@ -108,14 +149,14 @@ reviewed at the end of Stage 1B; merging services is cheap while they are skelet
 
 ## Shared packages
 
-| Package                | Purpose                                                                                                        | Depends on       |
-| ---------------------- | -------------------------------------------------------------------------------------------------------------- | ---------------- |
-| `@atlas/shared`        | Error model, environment definitions. Dependency-free; usable in browser                                       | —                |
-| `@atlas/schemas`       | Zod validation primitives, config parsers, JSON Schema export                                                  | zod              |
-| `@atlas/contracts`     | Service catalogue, HTTP envelopes/problems, health contracts, event envelope and event contracts               | shared, schemas  |
-| `@atlas/security`      | Redaction, PAN masking, secret-file loading, secure HTTP defaults                                              | —                |
-| `@atlas/observability` | Pino logger, Prometheus metrics, OpenTelemetry tracing                                                         | security         |
-| `@atlas/service-kit`   | Fastify service foundation: config, lifecycle, health, errors, correlation, connectors, messaging, HTTP client | all of the above |
+| Package                | Purpose                                                                                                                                                                                                                                                                                                   | Depends on       |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| `@atlas/shared`        | Error model, environment definitions. Dependency-free; usable in browser                                                                                                                                                                                                                                  | —                |
+| `@atlas/schemas`       | Zod validation primitives, config parsers, JSON Schema export                                                                                                                                                                                                                                             | zod              |
+| `@atlas/contracts`     | Service catalogue, HTTP envelopes/problems, health contracts, event envelope and event contracts                                                                                                                                                                                                          | shared, schemas  |
+| `@atlas/security`      | Redaction, PAN masking, secret-file loading, secure HTTP defaults                                                                                                                                                                                                                                         | —                |
+| `@atlas/observability` | Pino logger, Prometheus metrics, OpenTelemetry tracing                                                                                                                                                                                                                                                    | security         |
+| `@atlas/service-kit`   | Fastify service foundation: config, lifecycle, health, errors, correlation, connectors, messaging (retry, DLQ, resubscription), authenticated HTTP client; Stage 1A: token verification, service tokens, deny-by-default access policies, tenant-scoped transactions, transactional outbox, audit helpers | all of the above |
 
 Packages expose TypeScript source under the custom `@atlas/source` export condition (used by `tsx`,
 Vitest and Vite in development) and compiled `dist/` output by default (used in containers).
@@ -165,12 +206,17 @@ Details — headers, timeouts, retries, topology, delivery guarantees — are in
 | PostgreSQL 18             | Primary relational store, schema per service                                                         | `postgres:18.6-alpine`                                  |
 | Valkey 9                  | Low-latency transient state (transaction/challenge sessions, rate limits); Redis-protocol compatible | `valkey/valkey:9.1.3-alpine`                            |
 | RabbitMQ 4                | Event bus (topic exchange, quorum queues, dead-lettering)                                            | `rabbitmq:4.4.0-management-alpine`                      |
-| Keycloak 26               | OpenID Connect provider for portal identity (optional profile)                                       | `quay.io/keycloak/keycloak:26.8.0`                      |
+| Keycloak 26               | OpenID Connect provider: portal sign-in (with TOTP), service clients, user administration            | `quay.io/keycloak/keycloak:26.8.0`                      |
+| Jaeger 2                  | OTLP trace receiver and trace UI (Stage 1A)                                                          | `jaegertracing/jaeger:2.22.0`                           |
 | Mailpit                   | Captures email locally (future OTP-by-email simulation)                                              | `axllent/mailpit:v1.33.0`                               |
 | Prometheus 3 / Grafana 13 | Metrics collection and dashboards                                                                    | `prom/prometheus:v3.16.0`, `grafana/grafana-oss:13.0.2` |
 
-OpenTelemetry tracing is wired into every service and enabled by setting `OTEL_EXPORTER_OTLP_ENDPOINT`;
-Stage 0 ships no trace backend.
+OpenTelemetry tracing is enabled by setting `OTEL_EXPORTER_OTLP_ENDPOINT` (Compose points it at
+Jaeger). Instrumented: inbound and outbound HTTP (including `fetch`), PostgreSQL queries within a
+request, and RabbitMQ events — trace context travels in message headers and through the outbox, so a
+change made in the portal appears as one trace from gateway to the audit consumer. Every request span
+carries `atlas.correlation_id`. Tracing starts before any instrumented module loads (each service's
+`index.ts`). Grafana has a Jaeger datasource and an _ATLAS — Security, audit and messaging_ dashboard.
 
 ## Deployment model
 

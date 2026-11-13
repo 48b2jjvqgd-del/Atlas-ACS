@@ -1,5 +1,9 @@
 import { expect, test } from '@playwright/test';
-import { gatewayDown, platformServicesBody, stubGateway } from './fixtures';
+import { platformServicesBody, signIn, stubGateway } from './fixtures';
+
+test.beforeEach(async ({ page }) => {
+  await signIn(page, 'platform-admin');
+});
 
 test('renders live service status reported by the gateway', async ({ page }) => {
   await stubGateway(page);
@@ -19,10 +23,10 @@ test('sends a correlation ID with every API request', async ({ page }) => {
   expect((await request).headers()['x-correlation-id']).toMatch(/^[0-9a-f-]{36}$/);
 });
 
-test('explains when the gateway cannot be reached', async ({ page }) => {
-  await gatewayDown(page);
+test('explains when the health endpoint cannot be reached', async ({ page }) => {
+  await page.route('**/api/v1/platform/services', (route) => route.abort('connectionrefused'));
   await page.goto('/platform/health');
-  await expect(page.getByRole('alert')).toContainText('The API gateway could not be reached.');
+  await expect(page.getByRole('alert')).toContainText('could not be reached');
 });
 
 test('refuses to render a response that violates the published contract', async ({ page }) => {

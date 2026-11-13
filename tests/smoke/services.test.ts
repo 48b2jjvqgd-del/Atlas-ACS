@@ -21,6 +21,12 @@ const unreachableInfrastructure = {
   DATABASE_URL: 'postgres://atlas:smoke@127.0.0.1:1/atlas',
   VALKEY_URL: 'redis://:smoke@127.0.0.1:1/0',
   RABBITMQ_URL: 'amqp://atlas:smoke@127.0.0.1:1',
+  // Identity provider and secrets (unreachable/dummy): services must still start.
+  OIDC_ISSUER_URL: 'http://127.0.0.1:1/realms/atlas',
+  SERVICE_CLIENT_SECRET: 'smoke-client-secret-0123456789',
+  OIDC_CLIENT_SECRET: 'smoke-gateway-secret-0123456789',
+  SESSION_ENCRYPTION_KEY: '0'.repeat(64),
+  IDP_EVENT_POLL_INTERVAL_MS: '0',
 };
 
 function freePort(): Promise<number> {

@@ -16,21 +16,22 @@ RUN npm install --global --no-fund --no-audit pnpm@12.16.1
 WORKDIR /repo
 
 FROM base AS build
+# The package store is kept in an image layer, not a BuildKit cache mount: CI restores layers
+# from its build cache but never cache mounts, so `install --offline` would find an empty store.
+# This layer only rebuilds when the lockfile changes.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
-RUN --mount=type=cache,id=atlas-pnpm-store,target=/pnpm/store pnpm fetch
+RUN pnpm fetch
 COPY . .
-RUN --mount=type=cache,id=atlas-pnpm-store,target=/pnpm/store pnpm install --offline --frozen-lockfile
+RUN pnpm install --offline --frozen-lockfile
 RUN pnpm -r --filter "./packages/**" --filter "./services/**" --filter ./database run build
 
 FROM build AS deploy-service
 ARG SERVICE
 RUN test -n "${SERVICE}" || (echo "SERVICE build argument is required" && exit 1)
-RUN --mount=type=cache,id=atlas-pnpm-store,target=/pnpm/store \
-    pnpm --filter "@atlas/${SERVICE}" deploy --prod /out
+RUN pnpm --filter "@atlas/${SERVICE}" deploy --prod /out
 
 FROM build AS deploy-migrator
-RUN --mount=type=cache,id=atlas-pnpm-store,target=/pnpm/store \
-    pnpm --filter @atlas/database deploy --prod /out
+RUN pnpm --filter @atlas/database deploy --prod /out
 
 # ---- Database migrator (one-shot) ----
 FROM ${NODE_IMAGE} AS migrator
@@ -52,7 +53,7 @@ LABEL org.opencontainers.image.title="atlas-${SERVICE}" \
 WORKDIR /app
 COPY --from=deploy-service --chown=node:node /out ./
 USER node
-HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --start-interval=1s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/health/live').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 # exec form: node is PID 1 and receives SIGTERM directly for graceful shutdown
 CMD ["node", "dist/index.js"]

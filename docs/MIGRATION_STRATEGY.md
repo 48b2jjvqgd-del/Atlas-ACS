@@ -24,17 +24,17 @@ replaces configuration and infrastructure, not code.
 
 ## Infrastructure portability
 
-| Component     | Local              | Interface the code depends on                                   | Company replacement                                                                                                   |
-| ------------- | ------------------ | --------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| PostgreSQL    | Container          | PostgreSQL wire protocol, `DATABASE_URL`                        | Managed or company-operated PostgreSQL 15+ (uses `gen_random_uuid()` and standard SQL only)                           |
-| Valkey        | Container          | Redis protocol (RESP), `VALKEY_URL`                             | Company Valkey, or any Redis-protocol-compatible managed cache                                                        |
-| RabbitMQ      | Container          | AMQP 0-9-1, `RABBITMQ_URL`; quorum queues                       | Company RabbitMQ; or another broker by replacing `messaging.ts` — events are CloudEvents, so their shape is preserved |
-| Identity      | Keycloak container | OpenID Connect discovery (Stage 1A)                             | Company IdP via OIDC issuer URL and client registration                                                               |
-| Metrics       | Prometheus/Grafana | Prometheus exposition at `/metrics`                             | Any Prometheus-compatible collector                                                                                   |
-| Tracing       | None by default    | OTLP/HTTP, `OTEL_EXPORTER_OTLP_ENDPOINT`                        | Company OpenTelemetry collector or APM with OTLP ingest                                                               |
-| Logs          | stdout JSON        | stdout                                                          | Company log shipping (no code change)                                                                                 |
-| Email         | Mailpit            | SMTP (Stage 3)                                                  | Company mail relay                                                                                                    |
-| Orchestration | Docker Compose     | Container image + env vars + `/health/live` and `/health/ready` | Kubernetes, ECS, Nomad or VMs; probes map directly                                                                    |
+| Component     | Local              | Interface the code depends on                                                                                    | Company replacement                                                                                                       |
+| ------------- | ------------------ | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| PostgreSQL    | Container          | PostgreSQL wire protocol, `DATABASE_URL`                                                                         | Managed or company-operated PostgreSQL 15+ (uses `gen_random_uuid()` and standard SQL only)                               |
+| Valkey        | Container          | Redis protocol (RESP), `VALKEY_URL`                                                                              | Company Valkey, or any Redis-protocol-compatible managed cache                                                            |
+| RabbitMQ      | Container          | AMQP 0-9-1, `RABBITMQ_URL`; quorum queues                                                                        | Company RabbitMQ; or another broker by replacing `messaging.ts` — events are CloudEvents, so their shape is preserved     |
+| Identity      | Keycloak container | OIDC code flow + PKCE, client credentials, JWKS; Keycloak Admin API for user provisioning (identity-provider.ts) | Company IdP: issuer URL, client registrations, `amr` mapping; replace `identity-provider.ts` if user provisioning differs |
+| Metrics       | Prometheus/Grafana | Prometheus exposition at `/metrics`                                                                              | Any Prometheus-compatible collector                                                                                       |
+| Tracing       | Jaeger container   | OTLP/HTTP, `OTEL_EXPORTER_OTLP_ENDPOINT`                                                                         | Company OpenTelemetry collector or APM with OTLP ingest                                                                   |
+| Logs          | stdout JSON        | stdout                                                                                                           | Company log shipping (no code change)                                                                                     |
+| Email         | Mailpit            | SMTP (Stage 3)                                                                                                   | Company mail relay                                                                                                        |
+| Orchestration | Docker Compose     | Container image + env vars + `/health/live` and `/health/ready`                                                  | Kubernetes, ECS, Nomad or VMs; probes map directly                                                                        |
 
 No component depends on a particular cloud provider.
 
@@ -43,7 +43,9 @@ No component depends on a particular cloud provider.
 - Every setting is an environment variable documented in [`.env.example`](../.env.example) and
   [CONVENTIONS.md](architecture/CONVENTIONS.md#configuration).
 - Configuration is validated at startup; a misconfigured service refuses to start and names the keys.
-- `ATLAS_ENV` must be set explicitly (`staging`/`production` disable synthetic seeding).
+- `ATLAS_ENV` must be set explicitly (`staging`/`production` disable synthetic seeding). It does not
+  make records non-synthetic: in Stage 1A the database refuses non-synthetic issuers and users in every
+  environment (ADR-033).
 - Compose files are local-development artefacts; a company environment uses its own deployment
   descriptors in `infrastructure/deployment/<target>/`.
 
@@ -53,7 +55,9 @@ No component depends on a particular cloud provider.
 | -------------------------------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | Database, Valkey, RabbitMQ credentials | Generated into `.env` by `pnpm setup:env`                         | Secret manager, mounted as files: `DATABASE_URL_FILE`, `VALKEY_URL_FILE`, `RABBITMQ_URL_FILE`, `MIGRATION_DATABASE_URL_FILE` |
 | Grafana / Keycloak admin passwords     | `.env`                                                            | Not migrated — company tools replace them                                                                                    |
-| OIDC client configuration (Stage 1A)   | Keycloak realm import                                             | Company IdP registration                                                                                                     |
+| OIDC client configuration (Stage 1A)   | Keycloak realm import with `${ENV}` placeholders                  | Company IdP registration; `OIDC_CLIENT_SECRET_FILE`                                                                          |
+| Per-service database roles (Stage 1A)  | `DB_PASSWORD_*` generated into `.env`; `pnpm db:provision`        | DBA-provisioned roles; each service's `DATABASE_URL_FILE`; migrator credentials only in the migration job                    |
+| Session encryption key (Stage 1A)      | `SESSION_ENCRYPTION_KEY` generated                                | Secret manager (`SESSION_ENCRYPTION_KEY_FILE`); rotation ends existing sessions                                              |
 | Service-to-service credentials         | Local Keycloak client-credentials tokens, implemented in Stage 1A | Company PKI and token issuer, integrated in Stage 7                                                                          |
 | Cryptographic keys (Stage 1B+)         | Software keys, **simulation only**                                | HSM-held keys, generated in the target environment. **No key material ever moves from the independent environment.**         |
 
@@ -93,6 +97,9 @@ Production npm dependencies (174 packages, `pnpm -r licenses list --prod`, Stage
 | BSD-3-Clause  | 13    | Permissive (protobufjs, light-my-request, secure-json-parse, fast-uri) |
 | ISC           | 11    | Permissive                                                             |
 | BlueOak-1.0.0 | 5     | Permissive (glob, minimatch family)                                    |
+
+Added in Stage 1A (production): `jose` (MIT), `openid-client` and `oauth4webapi` (MIT),
+`@opentelemetry/instrumentation-undici` and `-pg` (Apache-2.0). Infrastructure: Jaeger 2.22 (Apache-2.0).
 
 Build/development-only: MPL-2.0 (`lightningcss`, used by Tailwind at build time; not shipped) and
 CC-BY-4.0 (`caniuse-lite` browser data; attribution licence, build time only).

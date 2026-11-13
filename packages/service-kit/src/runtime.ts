@@ -1,21 +1,48 @@
 import { readFileSync } from 'node:fs';
-import { serviceCatalog } from '@atlas/contracts';
-import { createLogger, startTracing, type Logger } from '@atlas/observability';
+import { serviceCatalog, type ServiceName } from '@atlas/contracts';
+import {
+  createLogger,
+  createServiceMetrics,
+  startTracing,
+  type Logger,
+} from '@atlas/observability';
 import type { z } from '@atlas/schemas';
 import { ConfigurationError } from '@atlas/shared';
 import type { FastifyInstance } from 'fastify';
+import type { JWTVerifyGetKey } from 'jose';
 import { buildServiceApp } from './app.js';
+import { installAccessControl, type PrincipalResolver } from './auth/access.js';
+import { createRemotePrincipalResolver } from './auth/principals.js';
+import {
+  createClientCredentialsProvider,
+  defaultTokenUrl,
+  type ServiceTokenProvider,
+} from './auth/service-tokens.js';
+import { createTokenVerifier, defaultJwksUrl } from './auth/tokens.js';
 import { loadServiceConfig } from './config.js';
 import { createPostgresConnector } from './connectors/postgres.js';
 import { createRabbitMqConnector } from './connectors/rabbitmq.js';
 import { createValkeyConnector } from './connectors/valkey.js';
 import { ReadinessRegistry } from './health.js';
+import { createServiceClient, type ServiceClient } from './http-client.js';
 import type {
   Infrastructure,
   ServiceConfig,
   ServiceContext,
   ServiceDefinition,
+  ServiceSecurity,
 } from './service.js';
+
+/** Test seams: replace infrastructure-facing security components. Never set from environment. */
+export interface ServiceOverrides {
+  /** Signing keys for token verification (instead of fetching the provider's JWKS). */
+  keySet?: JWTVerifyGetKey;
+  /** Outbound service-token source. */
+  tokens?: ServiceTokenProvider;
+  principals?: PrincipalResolver;
+  /** fetch used for outbound service calls. */
+  fetch?: typeof fetch;
+}
 
 export interface RunningService<TShape extends z.ZodRawShape> {
   app: FastifyInstance;
@@ -41,14 +68,17 @@ export function readPackageVersion(moduleUrl: string): string {
 export async function createService<TShape extends z.ZodRawShape>(
   definition: ServiceDefinition<TShape>,
   env: Readonly<Record<string, string | undefined>>,
-  options: { logger?: Logger } = {},
+  options: { logger?: Logger; overrides?: ServiceOverrides } = {},
 ): Promise<RunningService<TShape>> {
+  const security = definition.security;
   const config = loadServiceConfig(
     definition.name,
     definition.dependencies,
     definition.configShape ?? ({} as TShape),
     env,
+    { verifyTokens: security?.verifyTokens ?? false, calls: security?.calls ?? [] },
   );
+  const overrides = options.overrides ?? {};
   const logger =
     options.logger ??
     createLogger({
@@ -75,6 +105,9 @@ export async function createService<TShape extends z.ZodRawShape>(
       url: config.DATABASE_URL,
       applicationName: connectionName,
       logger,
+      ...(catalogue.dataStores.postgresSchema
+        ? { tenantContextSchema: catalogue.dataStores.postgresSchema }
+        : {}),
     });
     readiness.register('postgres', infrastructure.postgres.check);
   }
@@ -96,19 +129,94 @@ export async function createService<TShape extends z.ZodRawShape>(
     readiness.register('rabbitmq', infrastructure.rabbitmq.check);
   }
 
+  const metrics = createServiceMetrics(definition.name);
+
+  // ---- Security (Stage 1A)
+  const internalIssuer = config.OIDC_INTERNAL_URL ?? config.OIDC_ISSUER_URL;
+  let serviceSecurity: ServiceSecurity | undefined;
+  if (config.OIDC_ISSUER_URL && internalIssuer) {
+    const tokens =
+      overrides.tokens ??
+      (config.SERVICE_CLIENT_SECRET && (security?.calls?.length ?? 0) > 0
+        ? createClientCredentialsProvider({
+            service: definition.name,
+            tokenUrl: defaultTokenUrl(internalIssuer),
+            clientSecret: config.SERVICE_CLIENT_SECRET,
+            ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+          })
+        : undefined);
+    serviceSecurity = {
+      verifier: createTokenVerifier({
+        issuer: config.OIDC_ISSUER_URL,
+        jwksUrl: defaultJwksUrl(internalIssuer),
+        ...(overrides.keySet ? { keySet: overrides.keySet } : {}),
+      }),
+      ...(tokens ? { tokens } : {}),
+    };
+  }
+
+  const clients: Partial<Record<ServiceName, ServiceClient>> = {};
+  for (const callee of security?.calls ?? []) {
+    clients[callee] = createServiceClient({
+      caller: definition.name,
+      callee,
+      baseUrl: config.ATLAS_SERVICE_URLS[callee],
+      timeoutMs: config.SERVICE_CALL_TIMEOUT_MS,
+      ...(serviceSecurity?.tokens ? { tokens: serviceSecurity.tokens } : {}),
+      ...(overrides.fetch ? { fetch: overrides.fetch } : {}),
+    });
+  }
+
+  const shutdownHooks: (() => Promise<void>)[] = [];
   const context: ServiceContext<ServiceConfig<TShape>> = {
     config: config as ServiceConfig<TShape>,
     logger,
     metadata,
     infrastructure,
     readiness,
+    metrics,
+    clients,
+    ...(serviceSecurity ? { security: serviceSecurity } : {}),
+    onShutdown(hook) {
+      shutdownHooks.push(hook);
+    },
   };
 
-  const app = await buildServiceApp({ config, logger, metadata, readiness });
+  const app = await buildServiceApp({ config, logger, metadata, readiness, metrics });
+
+  if (security?.verifyTokens) {
+    if (!serviceSecurity)
+      throw new Error(`${definition.name} verifies tokens but has no OIDC issuer`);
+    let principals = overrides.principals ?? security.principals?.(context);
+    if (!principals) {
+      const identity = clients['identity-service'];
+      if (!identity) {
+        throw new Error(
+          `${definition.name} must declare identity-service in security.calls to resolve principals`,
+        );
+      }
+      principals = createRemotePrincipalResolver({ identityService: identity });
+    }
+    const recordDenied = security.onDenied?.(context);
+    installAccessControl(app, {
+      service: definition.name,
+      verifier: serviceSecurity.verifier,
+      principals,
+      platformMfaRequired: config.PLATFORM_MFA_REQUIRED,
+      onDenied: async (event) => {
+        metrics.accessDenied.inc({ reason: event.reason });
+        await recordDenied?.(event);
+      },
+    });
+  }
+
   await definition.register?.(app, context);
 
-  // Connections are released after the HTTP server has drained.
+  // Background work stops, then connections are released, after the HTTP server has drained.
   app.addHook('onClose', async () => {
+    for (const hook of shutdownHooks.reverse()) {
+      await hook().catch((error: unknown) => logger.warn({ error }, 'shutdown hook failed'));
+    }
     await Promise.allSettled(
       [infrastructure.postgres, infrastructure.valkey, infrastructure.rabbitmq].map((connector) =>
         connector?.close(),

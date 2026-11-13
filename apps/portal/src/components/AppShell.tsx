@@ -1,31 +1,47 @@
 import { useState } from 'react';
-import { Outlet, useLocation } from 'react-router';
-import {
-  filterNavigation,
-  findNavigationItem,
-  stageZeroPermissionCheck,
-  workspaces,
-} from '../app/navigation';
+import { Navigate, Outlet, useLocation } from 'react-router';
+import { filterNavigation, findNavigationItem, workspaces } from '../app/navigation';
+import { useSession } from '../lib/session';
+import { useTenant } from '../lib/tenant';
 import { AuthStatus } from './AuthStatus';
 import { AtlasLogo } from './AtlasLogo';
 import { EnvironmentBadge } from './EnvironmentBadge';
 import { Icon } from './Icon';
 import { Sidebar } from './Sidebar';
+import { SessionGate } from './SessionGate';
+import { TenantSwitcher } from './TenantSwitcher';
 
 export function AppShell() {
+  return (
+    <SessionGate>
+      <AuthenticatedShell />
+    </SessionGate>
+  );
+}
+
+function AuthenticatedShell() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const location = useLocation();
-  const visible = filterNavigation(workspaces, stageZeroPermissionCheck);
+  const { can } = useSession();
+  const { canInTenant } = useTenant();
+  const visible = filterNavigation(workspaces, (permission, scope) =>
+    scope === 'platform' ? can(permission) : canInTenant(permission),
+  );
   const current = findNavigationItem(location.pathname);
+
+  // A workspace the user cannot see is not merely hidden: send them to one they can use.
+  if (current && !visible.some((workspace) => workspace.id === current.workspace.id)) {
+    return <Navigate to="/" replace />;
+  }
 
   return (
     <div className="min-h-dvh lg:grid lg:grid-cols-[288px_1fr]">
-      {/* Desktop sidebar */}
-      <aside className="sticky top-0 hidden h-dvh border-r border-line bg-surface lg:block">
-        <Sidebar workspaces={visible} />
-      </aside>
+      <div className="hidden border-r border-line bg-surface lg:block">
+        <aside className="sticky top-0 h-dvh">
+          <Sidebar workspaces={visible} />
+        </aside>
+      </div>
 
-      {/* Tablet / narrow drawer */}
       {drawerOpen && (
         <div
           className="fixed inset-0 z-40 lg:hidden"
@@ -69,10 +85,11 @@ export function AppShell() {
                 <span className="text-ink">{current.item.label}</span>
               </>
             ) : (
-              <span className="text-ink">Dashboard</span>
+              <span className="text-ink">ATLAS</span>
             )}
           </p>
-          <div className="ml-auto flex items-center gap-4">
+          <div className="ml-auto flex items-center gap-3">
+            {location.pathname.startsWith('/issuer') && <TenantSwitcher />}
             <EnvironmentBadge />
             <span className="hidden h-6 w-px bg-line xl:block" aria-hidden="true" />
             <AuthStatus />

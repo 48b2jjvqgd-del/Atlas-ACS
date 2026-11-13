@@ -16,6 +16,22 @@ beforeAll(async () => {
       caller: request.headers['x-atlas-caller'] as string | undefined,
     });
     if (request.url === '/slow') return; // never responds
+    if (request.url === '/needs-fresh-token') {
+      const fresh = request.headers.authorization === 'Bearer token-2';
+      response.writeHead(fresh ? 200 : 401, { 'content-type': 'application/json' }).end(
+        fresh
+          ? '{"status":"ok","service":"protocol"}'
+          : JSON.stringify({
+              type: 'urn:x',
+              title: 't',
+              status: 401,
+              code: 'UNAUTHENTICATED',
+              detail: 'Token signature is invalid',
+              correlationId: 'abcdefgh-1',
+            }),
+      );
+      return;
+    }
     if (request.url === '/bad-contract') {
       response.writeHead(200, { 'content-type': 'application/json' }).end('{"status":"weird"}');
       return;
@@ -79,6 +95,21 @@ describe('createServiceClient', () => {
       code: 'DEPENDENCY_UNAVAILABLE',
       detail: 'Upstream responded 503 (SERVICE_UNAVAILABLE)',
     });
+  });
+
+  it('renews a rejected service token once and retries', async () => {
+    let issued = 0;
+    const tokens = { token: async () => `token-${++issued}`, invalidate: () => undefined };
+    const client = createServiceClient({
+      caller: 'api-gateway',
+      callee: 'protocol',
+      baseUrl,
+      timeoutMs: 500,
+      tokens,
+    });
+    const result = await client.get('/needs-fresh-token', { correlationId: 'corr-12345678' });
+    expect(result.status).toBe(200);
+    expect(issued).toBe(2);
   });
 
   it('reports DEPENDENCY_UNAVAILABLE when nothing is listening', async () => {

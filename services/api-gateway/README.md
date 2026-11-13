@@ -1,6 +1,8 @@
 # API Gateway (`api-gateway`)
 
-> **Stage 0 status:** foundation plus platform health aggregation (`GET /v1/platform/services`).
+> **Stage 1A status:** implemented — portal backend-for-frontend: OIDC sign-in (code + PKCE), encrypted
+> Valkey sessions, refresh, CSRF, rate limiting (Valkey, with fallback), audited sign-in/out, forwarding
+> to services with per-callee service tokens. Routes: `packages/contracts/src/http/v1/session.ts`.
 
 ## Responsibilities
 

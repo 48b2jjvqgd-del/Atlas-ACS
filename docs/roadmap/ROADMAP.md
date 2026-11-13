@@ -5,17 +5,17 @@ identifiers are referenced by the portal's placeholders, the compliance matrix a
 changing them requires updating those references. Final stage structure approved at the Stage 0 final
 review (ADR-022).
 
-| Stage | Name                                                                  | Status                                 |
-| ----- | --------------------------------------------------------------------- | -------------------------------------- |
-| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08) |
-| 1A    | Platform security and issuer foundations                              | Planned — **not started**              |
-| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**              |
-| 2     | Fraud and decision engine                                             | Planned                                |
-| 3     | Challenge engine                                                      | Planned                                |
-| 4     | Compliance engine                                                     | Planned                                |
-| 5     | Reporting and analytics                                               | Planned                                |
-| 6     | Demonstration and performance testing                                 | Planned                                |
-| 7     | Migration, authorised scheme integration and certification            | Planned                                |
+| Stage | Name                                                                  | Status                                     |
+| ----- | --------------------------------------------------------------------- | ------------------------------------------ |
+| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)     |
+| 1A    | Platform security and issuer foundations                              | **Security remediation — awaiting review** |
+| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                  |
+| 2     | Fraud and decision engine                                             | Planned                                    |
+| 3     | Challenge engine                                                      | Planned                                    |
+| 4     | Compliance engine                                                     | Planned                                    |
+| 5     | Reporting and analytics                                               | Planned                                    |
+| 6     | Demonstration and performance testing                                 | Planned                                    |
+| 7     | Migration, authorised scheme integration and certification            | Planned                                    |
 
 Each stage is independent and has its own acceptance criteria. In particular, fraud/decisioning (2) and
 challenge (3) are **not** part of Stage 1B.
@@ -46,6 +46,39 @@ auditability are in place and tested. Includes issuer administration and RBAC.
 | 10  | **End-to-end OpenTelemetry tracing verification**: local OTLP collector and trace backend in Compose; trace context propagated across HTTP and RabbitMQ; correlation ID recorded on spans                                                                        | Automated test asserting one trace spans portal → gateway → service → event consumer                           |
 
 Also in 1A: a Valkey-backed rate-limit store at the gateway.
+
+### Stage 1A delivery status
+
+| #   | Status                                                                                                                  | Evidence                                                                       |
+| --- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| 1   | Implemented: OIDC code + PKCE BFF, sessions, sign-out, TOTP for platform users                                          | `tests/system/authentication.test.ts`, browser journeys                        |
+| 2   | Implemented: permission catalogue, deny-by-default route policies, permission-driven portal                             | `access.test.ts`, `permissions.test.ts`, `navigation.test.ts`, `shell.spec.ts` |
+| 3   | Implemented: issuer registry, lifecycle, versioned configuration, users; RLS                                            | `issuer-management.test.ts`, `database-security.test.ts`                       |
+| 4   | Implemented: tenant context from verified principals; tampering tests                                                   | `tenant-isolation.test.ts`                                                     |
+| 5   | Implemented for every tenant-scoped endpoint (both directions)                                                          | `tenant-isolation.test.ts`                                                     |
+| 6   | Implemented: migrator + per-service roles; append-only audit role                                                       | `database-security.test.ts`                                                    |
+| 7   | Implemented: client-credentials per callee, caller allow-lists; mTLS design documented                                  | `access.test.ts`, `service-security.test.ts`                                   |
+| 8   | Implemented: activity events via transactional/Valkey outbox; hash-chained append-only store                            | `database-security.test.ts`, `audit.test.ts`                                   |
+| 9   | Implemented: resubscription, bounded publish retry, delayed retries, DLQ, unrouted-event retention, idempotent consumer | `messaging-resilience.test.ts` (forced connection loss)                        |
+| 10  | Implemented: OTLP to Jaeger; HTTP, fetch, PostgreSQL and RabbitMQ propagation                                           | `tracing.test.ts`                                                              |
+| —   | Valkey-backed rate limiting with fallback                                                                               | `rate-limit-store.test.ts`, `rate-limit.test.ts`                               |
+
+Not done in 1A (deliberately): BIN ranges (1B), authentication activity views (1B), external
+anchoring of audit chain heads, session listing per user.
+
+### Stage 1A security remediation (review findings)
+
+| Item                                                    | Status                                                                                                              | Evidence                                                   |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| F1 RLS context could be widened with `set_config()`     | Fixed: database-held, set-once context (ADR-034). Documented limit: does not contain a compromised service          | `database-security.test.ts`                                |
+| F2 `is_synthetic` followed `ATLAS_ENV`                  | Fixed: always synthetic; database constraints; reserved email domains only (ADR-033)                                | `synthetic-data.test.ts`, `database-security.test.ts`      |
+| F3 permission scopes enforced only by the application   | Fixed: catalogue in the database, triggers, read-only system roles, migrator-side synchronisation (ADR-035)         | `database-security.test.ts`, `migrations.test.ts`          |
+| Gateway forwarded non-canonical paths (internal routes) | Fixed: canonical paths only, never `/internal/`                                                                     | `upstream-path.test.ts`, `service-security.test.ts`        |
+| Privilege escalation through platform administration    | Fixed: privilege ceiling, no self-change via invitations or held roles (ADR-036)                                    | `identity-escalation.test.ts`                              |
+| Promotion to platform roles did not require MFA at IdP  | Fixed: TOTP enrolment required, sessions ended (ADR-030 amendment)                                                  | `identity-escalation.test.ts`, `account-lifecycle.test.ts` |
+| Outbox reordered events after a broker outage           | Fixed: relay-level back-off; poison rows set aside                                                                  | `outbox-resilience.test.ts`                                |
+| Session fixation / sign-out at the IdP                  | Hardened: previous session destroyed at sign-in; refresh token revoked at sign-out                                  | system tests                                               |
+| Remaining limitations                                   | Listed in [SECURITY_MODEL.md](../security/SECURITY_MODEL.md#known-limitations-after-stage-1a); Stage 1B not started | —                                                          |
 
 ## Stage 1B — ACS protocol foundation and simulated Visa/Mastercard DS connectivity
 

@@ -36,3 +36,7 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+
+# Playwright full-stack outputs
+tests/e2e/playwright-report-stack/
+tests/e2e/screenshots/
