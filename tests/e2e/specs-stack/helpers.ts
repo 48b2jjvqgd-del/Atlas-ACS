@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,9 +17,13 @@ function totp(time = Date.now()): string {
   return String((digest.readUInt32BE(offset) & 0x7fffffff) % 1_000_000).padStart(6, '0');
 }
 
-/** One-time codes are single-use; wait for a fresh one (shared with the system tests). */
-async function freshCode(): Promise<string> {
-  const file = join(tmpdir(), 'atlas-system-tests-last-totp');
+/**
+ * One-time codes are single-use per account; wait for a fresh one when this account already used
+ * the current code. The record file is shared with the system tests (tests/system/client.ts).
+ */
+async function freshCode(email: string): Promise<string> {
+  const key = createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16);
+  const file = join(tmpdir(), `atlas-system-tests-last-totp-${key}`);
   for (;;) {
     const code = totp();
     if (!existsSync(file) || readFileSync(file, 'utf8') !== code) {
@@ -38,7 +42,7 @@ export async function signInAs(page: Page, email: string) {
   await page.locator('#password').fill(password);
   await page.locator('#kc-login').click();
   if (email.endsWith('@atlas.test')) {
-    await page.locator('#otp').fill(await freshCode());
+    await page.locator('#otp').fill(await freshCode(email));
     await page.locator('#kc-login').click();
   }
   await expect(page.getByTestId('auth-status').getByRole('button')).toBeVisible();

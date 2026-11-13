@@ -73,8 +73,6 @@ jobs:
       - name: Infrastructure logs on failure
         if: failure()
         run: docker compose logs --no-color
-      - if: always()
-        run: docker compose down -v
 
   e2e:
     name: Portal E2E (Playwright)
@@ -112,12 +110,35 @@ jobs:
         run: |
           cp .env.example .env
           docker compose --profile services --profile identity config --quiet
+      # Layers come from the cache the full-stack job writes (one scope per compose service).
       - name: Build service image (api-gateway)
-        run: docker build -f infrastructure/docker/service.Dockerfile --build-arg SERVICE=api-gateway --build-arg BUILD_SHA=${{ github.sha }} -t atlas-acs/api-gateway:ci .
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infrastructure/docker/service.Dockerfile
+          build-args: |
+            SERVICE=api-gateway
+            BUILD_SHA=${{ github.sha }}
+          tags: atlas-acs/api-gateway:ci
+          load: true
+          cache-from: type=gha,scope=api-gateway
       - name: Build migrator image
-        run: docker build -f infrastructure/docker/service.Dockerfile --target migrator -t atlas-acs/migrator:ci .
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infrastructure/docker/service.Dockerfile
+          target: migrator
+          tags: atlas-acs/migrator:ci
+          load: true
+          cache-from: type=gha,scope=migrate
       - name: Build portal image
-        run: docker build -f infrastructure/docker/portal.Dockerfile -t atlas-acs/portal:ci .
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: infrastructure/docker/portal.Dockerfile
+          tags: atlas-acs/portal:ci
+          load: true
+          cache-from: type=gha,scope=portal
       - name: Container starts as non-root and serves health
         run: |
           # Dependencies are deliberately unreachable: the gateway must still start (lazy connections).
@@ -151,8 +172,27 @@ jobs:
           pnpm setup:env
           # Many scripted sign-ins come from one address in this job.
           echo 'RATE_LIMIT_SIGN_IN_MAX=500' >> .env
-      - name: Build and start the full stack (Keycloak, Jaeger, migrations, services, portal)
-        run: docker compose --profile services up -d --build --wait
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # One cache scope per image: images built together into a single scope overwrite each
+      # other's cache index. Generated from compose.yaml, so new services are covered.
+      - name: Per-image build cache scopes
+        id: cache
+        run: |
+          {
+            echo 'set<<EOF'
+            docker buildx bake -f compose.yaml --print 2>/dev/null | jq -r '.target | keys[] |
+              "\(.).cache-from=type=gha,scope=\(.)", "\(.).cache-to=type=gha,scope=\(.),mode=max"'
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+      - name: Build images (layers cached between runs)
+        uses: docker/bake-action@59cb1203cd42bcefd40a1b6d73b589e48c86040e # v7.5.0
+        with:
+          source: .
+          files: compose.yaml
+          load: true
+          set: ${{ steps.cache.outputs.set }}
+      - name: Start the full stack (Keycloak, Jaeger, migrations, services, portal)
+        run: docker compose --profile services up -d --wait
       - name: Seed synthetic data
         run: pnpm db:seed
       - name: System tests (real sign-in, RBAC, tenant isolation, audit, service security, tracing)
@@ -171,8 +211,6 @@ jobs:
       - name: Stack logs on failure
         if: failure()
         run: docker compose --profile services logs --no-color --tail 300
-      - if: always()
-        run: docker compose --profile services down -v
 
   dependency-audit:
     name: Dependency audit

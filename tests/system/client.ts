@@ -88,7 +88,7 @@ export class PortalUser {
     });
     if (options.otp) {
       html = await page.text();
-      page = await this.submit(html, { otp: await freshCode() });
+      page = await this.submit(html, { otp: await freshCode(email) });
     }
     if (page.status !== 302) throw new SignInRefused(await page.text());
     const callback = await this.raw(page.headers.get('location')!);
@@ -119,7 +119,7 @@ export class PortalUser {
       username: email,
       password: DEMO_PASSWORD,
     });
-    if (options.otp) page = await this.submit(await page.text(), { otp: await freshCode() });
+    if (options.otp) page = await this.submit(await page.text(), { otp: await freshCode(email) });
     const location = page.headers.get('location');
     const code = location ? new URL(location).searchParams.get('code') : null;
     if (!code) throw new SignInRefused(await page.text());
@@ -174,17 +174,23 @@ export class SignInRefused extends Error {
 }
 
 /**
- * One-time codes are single-use at the identity provider (replay protection), so a second sign-in
- * within the same 30-second window waits for the next code instead of reusing it.
+ * One-time codes are single-use at the identity provider (replay protection). The used-code record
+ * is per account credential, so only a second sign-in by the same account within one 30-second
+ * window waits for the next code. Other accounts sign in at once, even though the synthetic
+ * accounts share a secret.
  */
-const lastCodeFile = join(tmpdir(), 'atlas-system-tests-last-totp');
-async function freshCode(): Promise<string> {
+function lastCodeFile(email: string): string {
+  const key = createHash('sha256').update(email.toLowerCase()).digest('hex').slice(0, 16);
+  return join(tmpdir(), `atlas-system-tests-last-totp-${key}`);
+}
+async function freshCode(email: string): Promise<string> {
+  const file = lastCodeFile(email);
   for (;;) {
     const code = totp();
     // Shared across test files (each runs in its own worker).
-    const last = existsSync(lastCodeFile) ? readFileSync(lastCodeFile, 'utf8') : '';
+    const last = existsSync(file) ? readFileSync(file, 'utf8') : '';
     if (code !== last) {
-      writeFileSync(lastCodeFile, code);
+      writeFileSync(file, code);
       return code;
     }
     await new Promise((resolve) => setTimeout(resolve, 1_000));

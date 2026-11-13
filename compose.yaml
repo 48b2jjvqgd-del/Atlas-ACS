@@ -28,8 +28,8 @@ x-service: &service
       condition: service_healthy
     rabbitmq:
       condition: service_healthy
-    keycloak:
-      condition: service_healthy
+  # Not Keycloak: services reach it lazily (signing keys on first verification, sign-in on demand),
+  # so they start alongside it instead of waiting ~40 s for it to become healthy.
 
 # Shared by every service. Each service adds its own DATABASE_URL (its own least-privilege role)
 # and, if it calls other services, its own SERVICE_CLIENT_SECRET.
@@ -60,10 +60,15 @@ services:
       - postgres-data:/var/lib/postgresql
       - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      # TCP, not the socket: during first-run initialisation a temporary server answers on the
+      # socket only, so this never reports ready before the real server is up.
+      test: ['CMD-SHELL', 'pg_isready -h 127.0.0.1 -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
       interval: 5s
       timeout: 3s
       retries: 20
+      # Poll every second while starting, so dependants start as soon as it is ready.
+      start_period: 30s
+      start_interval: 1s
 
   # Valkey (BSD-3-Clause) replaces Redis (ADR-019). Same protocol; clients use redis:// URLs.
   valkey:
@@ -86,6 +91,8 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 30s
+      start_interval: 1s
 
   rabbitmq:
     image: rabbitmq:4.4.0-management-alpine
@@ -110,7 +117,8 @@ services:
       interval: 10s
       timeout: 10s
       retries: 20
-      start_period: 20s
+      start_period: 60s
+      start_interval: 2s
 
   mailpit:
     image: axllent/mailpit:v1.33.0
@@ -172,10 +180,17 @@ services:
   # after changing atlas-realm.json, run `pnpm identity:reset`.
   keycloak:
     profiles: [identity, services]
-    image: quay.io/keycloak/keycloak:26.8.0
-    command: ['start-dev', '--import-realm']
+    # Pre-built image (keycloak.Dockerfile): starts with --optimized instead of re-running the
+    # Quarkus build on every start as start-dev does (~15 s). HTTP and local caches as before.
+    build:
+      context: infrastructure/docker/keycloak
+      dockerfile: keycloak.Dockerfile
+    image: atlas-acs/keycloak:local
+    command: ['start', '--optimized', '--import-realm']
     restart: unless-stopped
     environment:
+      KC_HTTP_ENABLED: 'true'
+      KC_CACHE: local
       KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USER:-admin}
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run pnpm setup:env}
       # Browsers (and token "iss") use the public URL; services use http://keycloak:8080.
@@ -193,7 +208,6 @@ services:
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
       KC_DB_USERNAME: ${POSTGRES_USER:-atlas}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?run pnpm setup:env}
-      KC_HEALTH_ENABLED: 'true'
       KC_HTTP_PORT: '8080'
     depends_on:
       postgres:
@@ -212,7 +226,8 @@ services:
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 30s
+      start_period: 120s
+      start_interval: 2s
 
   # Trace backend (Apache-2.0). Receives OTLP over HTTP on 4318; UI on http://localhost:16686.
   jaeger:

@@ -199,7 +199,8 @@ while every other environment runs with both enforced.
 - No TLS between services or to infrastructure locally (mTLS and company PKI are Stage 7). Service
   ports are bound to loopback; anyone on the host can reach `/health`, `/info` and `/metrics`, which
   expose no tenant data. Application routes all require service tokens.
-- Keycloak runs in development mode (`start-dev`, HTTP, embedded admin with a generated password).
+- Keycloak runs from a pre-built local image (`start --optimized`) over plain HTTP with local-only
+  caches and a bootstrap admin with a generated password. It is not a production configuration.
 - The local demo accounts share one generated password and a pre-enrolled TOTP secret (from `.env`).
 - Permission changes take up to 10 seconds to reach other services (principal cache).
 - Audit events from producers are at-least-once; the consumer deduplicates by id. Chain heads are not
