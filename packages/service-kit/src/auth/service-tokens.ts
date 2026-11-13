@@ -17,6 +17,8 @@ import { serviceClientId } from './tokens.js';
  */
 export interface ServiceTokenProvider {
   token(audience: ServiceName): Promise<string>;
+  /** Drops a cached token (e.g. after the callee rejected it); the next call fetches a new one. */
+  invalidate?(audience: ServiceName): void;
 }
 
 export interface ClientCredentialsOptions {
@@ -84,6 +86,9 @@ export function createClientCredentialsProvider(
   }
 
   return {
+    invalidate(audience) {
+      cache.delete(audience);
+    },
     async token(audience) {
       const cached = cache.get(audience);
       if (cached && cached.expiresAt - margin > Date.now()) return cached.token;

@@ -62,10 +62,11 @@ export function createServiceClient(options: ServiceClientOptions) {
   const doFetch = options.fetch ?? fetch;
   const base = options.baseUrl.replace(/\/$/, '');
 
-  async function request<T>(
+  async function execute<T>(
     method: Method,
     path: string,
     request: ServiceRequest<T>,
+    retried = false,
   ): Promise<ServiceResponse<T>> {
     const started = performance.now();
     const requestHeaders: Record<string, string> = {
@@ -94,6 +95,20 @@ export function createServiceClient(options: ServiceClientOptions) {
       throw new AtlasError(timedOut ? 'UPSTREAM_TIMEOUT' : 'DEPENDENCY_UNAVAILABLE', {
         cause: error,
       });
+    }
+    // A cached service token can outlive the provider's signing key (e.g. after a key change):
+    // when the callee rejects our own credentials, fetch a new token once and retry.
+    if (response.status === 401 && !retried && options.tokens?.invalidate && options.callee) {
+      const problem = problemDetailsSchema.safeParse(
+        await response
+          .clone()
+          .json()
+          .catch(() => undefined),
+      );
+      if (problem.success && problem.data.detail !== 'User token required') {
+        options.tokens.invalidate(options.callee);
+        return execute(method, path, request, true);
+      }
     }
     const latencyMs = Math.round((performance.now() - started) * 100) / 100;
     const accept = request.acceptStatus ?? ((status: number) => status >= 200 && status < 300);
@@ -125,11 +140,11 @@ export function createServiceClient(options: ServiceClientOptions) {
   }
 
   return {
-    get: <T>(path: string, r: ServiceRequest<T>) => request<T>('GET', path, r),
-    post: <T>(path: string, r: ServiceRequest<T>) => request<T>('POST', path, r),
-    put: <T>(path: string, r: ServiceRequest<T>) => request<T>('PUT', path, r),
-    patch: <T>(path: string, r: ServiceRequest<T>) => request<T>('PATCH', path, r),
-    delete: <T>(path: string, r: ServiceRequest<T>) => request<T>('DELETE', path, r),
+    get: <T>(path: string, r: ServiceRequest<T>) => execute<T>('GET', path, r),
+    post: <T>(path: string, r: ServiceRequest<T>) => execute<T>('POST', path, r),
+    put: <T>(path: string, r: ServiceRequest<T>) => execute<T>('PUT', path, r),
+    patch: <T>(path: string, r: ServiceRequest<T>) => execute<T>('PATCH', path, r),
+    delete: <T>(path: string, r: ServiceRequest<T>) => execute<T>('DELETE', path, r),
   };
 }
 

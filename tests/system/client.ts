@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ const envFile = join(import.meta.dirname, '..', '..', '.env');
 if (existsSync(envFile)) process.loadEnvFile(envFile);
 
 export const PORTAL = process.env.SYSTEM_TEST_PORTAL_URL ?? 'http://localhost:8080';
+export const KEYCLOAK = process.env.SYSTEM_TEST_KEYCLOAK_URL ?? 'http://localhost:8180';
 export const DEMO_PASSWORD = required('ATLAS_DEMO_PASSWORD');
 const TOTP_SECRET = required('ATLAS_DEMO_TOTP_SECRET');
 
@@ -94,6 +95,35 @@ export class PortalUser {
     const target = callback.headers.get('location') ?? '';
     await this.session();
     return target;
+  }
+
+  /**
+   * Drives the provider's login pages for the gateway client with this test's own PKCE values and
+   * returns the authorisation code instead of delivering it to the gateway (for inspecting tokens).
+   */
+  async authorizationCode(email: string, options: { otp?: boolean } = {}) {
+    const verifier = randomBytes(32).toString('base64url');
+    const redirectUri = `${PORTAL}/api/v1/auth/callback`;
+    const authorize = new URL(`${KEYCLOAK}/realms/atlas/protocol/openid-connect/auth`);
+    authorize.search = new URLSearchParams({
+      client_id: 'atlas-gateway',
+      response_type: 'code',
+      scope: 'openid',
+      redirect_uri: redirectUri,
+      state: randomBytes(8).toString('hex'),
+      nonce: randomBytes(8).toString('hex'),
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'),
+      code_challenge_method: 'S256',
+    }).toString();
+    let page = await this.submit(await (await this.raw(authorize.href)).text(), {
+      username: email,
+      password: DEMO_PASSWORD,
+    });
+    if (options.otp) page = await this.submit(await page.text(), { otp: await freshCode() });
+    const location = page.headers.get('location');
+    const code = location ? new URL(location).searchParams.get('code') : null;
+    if (!code) throw new SignInRefused(await page.text());
+    return { code, verifier, redirectUri };
   }
 
   private async submit(html: string, fields: Record<string, string>): Promise<Response> {

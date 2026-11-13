@@ -571,21 +571,29 @@ export const definition = defineService({
         request.body !== undefined && !['GET', 'HEAD', 'DELETE'].includes(request.method);
       if (hasBody) outbound['content-type'] = 'application/json';
 
-      let upstream: Response;
-      try {
-        upstream = await fetch(`${config.ATLAS_SERVICE_URLS[target]}${path}`, {
-          method: request.method,
-          headers: outbound,
-          ...(hasBody ? { body: JSON.stringify(request.body) } : {}),
-          signal: AbortSignal.timeout(config.UPSTREAM_TIMEOUT_MS),
-        });
-      } catch (error) {
-        throw new AtlasError(
-          (error as Error).name === 'TimeoutError' ? 'UPSTREAM_TIMEOUT' : 'DEPENDENCY_UNAVAILABLE',
-          {
-            cause: error,
-          },
-        );
+      const send = async (): Promise<Response> => {
+        try {
+          return await fetch(`${config.ATLAS_SERVICE_URLS[target]}${path}`, {
+            method: request.method,
+            headers: outbound,
+            ...(hasBody ? { body: JSON.stringify(request.body) } : {}),
+            signal: AbortSignal.timeout(config.UPSTREAM_TIMEOUT_MS),
+          });
+        } catch (error) {
+          throw new AtlasError(
+            (error as Error).name === 'TimeoutError'
+              ? 'UPSTREAM_TIMEOUT'
+              : 'DEPENDENCY_UNAVAILABLE',
+            { cause: error },
+          );
+        }
+      };
+      let upstream = await send();
+      // A cached service token can outlive a provider signing-key change: renew it once.
+      if (upstream.status === 401 && tokens.invalidate) {
+        tokens.invalidate(target);
+        outbound[headers.authorization] = `Bearer ${await tokens.token(target)}`;
+        upstream = await send();
       }
       reply.status(upstream.status);
       reply.header('cache-control', 'no-store');

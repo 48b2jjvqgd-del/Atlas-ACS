@@ -82,7 +82,7 @@ export function createKeycloakAdmin(options: {
     }
   }
 
-  async function admin(path: string, init: RequestInit = {}): Promise<Response> {
+  async function admin(path: string, init: RequestInit = {}, retried = false): Promise<Response> {
     const response = await call(`${adminBase}${path}`, {
       ...init,
       headers: {
@@ -92,6 +92,11 @@ export function createKeycloakAdmin(options: {
         ...(init.headers as Record<string, string> | undefined),
       },
     });
+    if (response.status === 401 && !retried) {
+      // The cached token may predate a signing-key change at the provider: fetch a new one once.
+      cached = undefined;
+      return admin(path, init, true);
+    }
     if (response.status >= 500 || response.status === 401 || response.status === 403) {
       throw new AtlasError('DEPENDENCY_UNAVAILABLE', {
         detail: `Identity provider responded ${response.status}`,

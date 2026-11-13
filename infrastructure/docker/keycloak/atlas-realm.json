@@ -1546,14 +1546,14 @@
       "alias": "atlas-amr-pwd",
       "config": {
         "default.reference.value": "pwd",
-        "default.reference.maxAge": "0"
+        "default.reference.maxAge": "28800"
       }
     },
     {
       "alias": "atlas-amr-otp",
       "config": {
         "default.reference.value": "otp",
-        "default.reference.maxAge": "0"
+        "default.reference.maxAge": "28800"
       }
     }
   ],
