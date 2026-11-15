@@ -22,11 +22,11 @@
   "dependencies": {
     "@atlas/security": "workspace:*",
     "@opentelemetry/api": "~1.10.0",
-    "@opentelemetry/exporter-trace-otlp-http": "^0.301.0",
-    "@opentelemetry/instrumentation-http": "^0.301.0",
-    "@opentelemetry/resources": "^3.1.0",
-    "@opentelemetry/sdk-node": "^0.301.0",
-    "@opentelemetry/semantic-conventions": "^1.38.0",
+    "@opentelemetry/exporter-trace-otlp-http": "^0.301.1",
+    "@opentelemetry/instrumentation-http": "^0.301.2",
+    "@opentelemetry/resources": "^3.1.1",
+    "@opentelemetry/sdk-node": "^0.301.1",
+    "@opentelemetry/semantic-conventions": "^1.45.0",
     "@prometheus-io/client": "^0.16.1",
     "pino": "^10.4.0",
     "pino-pretty": "^13.2.0"
