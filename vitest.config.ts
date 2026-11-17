@@ -26,6 +26,7 @@ export default defineConfig({
             'services/*/src/**/*.test.ts',
             'apps/portal/src/**/*.test.{ts,tsx}',
             'database/src/**/*.test.ts',
+            'scripts/**/*.test.mjs',
           ],
           environment: 'node',
         },

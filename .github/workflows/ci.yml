@@ -191,6 +191,21 @@ jobs:
           files: compose.yaml
           load: true
           set: ${{ steps.cache.outputs.set }}
+      # The service and migrator runtime stages remove the base image's npm CLI, whose bundled
+      # dependencies included a vulnerable picomatch (GHSA-fc5q-39xc-vjpf). Keep it that way.
+      - name: Runtime images contain no npm, npx or picomatch
+        run: |
+          checked=0
+          for image in $(docker compose --profile services config --images \
+                         | grep '^atlas-acs/' | grep -v -e '/portal:' -e '/keycloak:'); do
+            docker run --rm --entrypoint sh "$image" -c \
+              '! command -v npm >/dev/null && ! command -v npx >/dev/null &&
+               [ -z "$(find / -xdev -name "picomatch*" 2>/dev/null | grep -v ^/proc)" ]' \
+              || { echo "::error::$image contains npm, npx or picomatch"; exit 1; }
+            echo "$image: no npm, npx or picomatch"
+            checked=$((checked + 1))
+          done
+          test "$checked" -eq 14 || { echo "::error::expected 14 service/migrator images, checked $checked"; exit 1; }
       - name: Start the full stack (Keycloak, Jaeger, migrations, services, portal)
         run: docker compose --profile services up -d --wait
       - name: Seed synthetic data
@@ -225,5 +240,7 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: pnpm
+      # Fails on any high or critical advisory except a documented, path-scoped, expiring
+      # exception (scripts/audit-exceptions.json; SECURITY_MODEL.md "Accepted dependency advisories").
       - name: Fail on high or critical advisories
-        run: pnpm audit --audit-level high
+        run: node scripts/audit-gate.mjs

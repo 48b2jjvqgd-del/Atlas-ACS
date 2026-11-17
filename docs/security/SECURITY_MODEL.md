@@ -380,4 +380,26 @@ cannot know which tenants they belong to.
 | GHSA-3g3m-2fjr-6pw4 | `glob@13` (node-pg-migrate)       | Moderate | Fix requires a major upgrade not supported by node-pg-migrate 9; ATLAS does not enable node-pg-migrate's glob mode, so the vulnerable code path is not used | Next node-pg-migrate release |
 | GHSA-g3hv-75wg-m249 | `minimatch@10` (ESLint, dev only) | Moderate | Fix requires a major upgrade not supported by ESLint 10; development tooling only, patterns are repository-controlled                                       | Next ESLint release          |
 
-The CI audit gate fails on any **high** or **critical** advisory.
+The CI audit gate (`node scripts/audit-gate.mjs`) fails on any **high** or **critical** advisory,
+except a temporary exception recorded below **and** in `scripts/audit-exceptions.json`. The gate applies
+an exception only while every finding stays inside its scope — one advisory, one package, the recorded
+versions, the recorded development/build dependency paths, and absent from the production-only audit —
+and fails once the review date passes, once a patched version is published, or once the exception no
+longer matches anything. Moderate advisories do not fail the gate (unchanged). `pnpm audit:deps` runs the same gate locally;
+`pnpm audit:deps:raw` runs the plain `pnpm audit`, which still reports the excepted advisory.
+
+### Temporary high-severity exceptions
+
+| Field             | GHSA-fc5q-39xc-vjpf                                                                                                                                                                                                                                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CVE               | CVE-2026-112366                                                                                                                                                                                                                                                                      |
+| Severity          | High — ReDoS through single-branch repeated extglobs                                                                                                                                                                                                                                 |
+| Affected package  | `picomatch` ≤ 4.0.7; installed 4.0.7 (lockfile, one copy). No patched release exists                                                                                                                                                                                                 |
+| Dependency paths  | Development/build only: `apps/portal` → `vite`, `@vitejs/plugin-react` → `vite`, `@tailwindcss/vite` → `vite`; root → `vitest` (and `@vitest/mocker` → `vite`); root → `typescript-eslint` → `@typescript-eslint/typescript-estree` → `tinyglobby` (± `fdir`)                        |
+| Not covered       | The copy bundled with the npm CLI in the Node base image (`picomatch` 4.0.4). It is **removed** from the service and migrator runtime images instead (`service.Dockerfile`); the portal (nginx) and Keycloak images never contained it                                               |
+| Evidence          | `pnpm why picomatch --prod`: no path; `pnpm audit --prod`: no high finding; no ATLAS source imports a glob library or spawns processes; no `picomatch`, `npm` or `npx` in the 14 service/migrator images — checked by CI on every run (full-stack job), and 7 also inspected locally |
+| Justification     | Reached only by developer and CI tooling; glob patterns come from repository configuration, not from users or requests                                                                                                                                                               |
+| Residual risk     | A crafted pattern in repository configuration or a malicious development dependency could stall a developer or CI build (denial of service). No runtime exposure                                                                                                                     |
+| Owner             | Project owner (Stage 1A approver)                                                                                                                                                                                                                                                    |
+| Approved / review | 2026-11-17 / **2026-12-01** (14 days). The gate fails after the review date                                                                                                                                                                                                          |
+| Removal           | Remove the exception once an official patched `picomatch` release is available and verified, and upgrade. Check for an upstream fix at every dependency review. No forks, unofficial patches or forced overrides                                                                     |

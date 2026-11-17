@@ -36,6 +36,9 @@ RUN pnpm --filter @atlas/database deploy --prod /out
 # ---- Database migrator (one-shot) ----
 FROM ${NODE_IMAGE} AS migrator
 ENV NODE_ENV=production
+# The npm CLI (and npx) from the base image is not needed at runtime and bundles its own
+# dependencies (e.g. picomatch, GHSA-fc5q-39xc-vjpf); remove it. Node.js itself is kept.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 WORKDIR /app
 COPY --from=deploy-migrator --chown=node:node /out ./
 USER node
@@ -47,6 +50,9 @@ FROM ${NODE_IMAGE} AS service
 ARG SERVICE
 ARG BUILD_SHA=
 ENV NODE_ENV=production HOST=0.0.0.0 ATLAS_BUILD_SHA=${BUILD_SHA}
+# The npm CLI (and npx) from the base image is not needed at runtime and bundles its own
+# dependencies (e.g. picomatch, GHSA-fc5q-39xc-vjpf); remove it. Node.js itself is kept.
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 LABEL org.opencontainers.image.title="atlas-${SERVICE}" \
       org.opencontainers.image.description="ATLAS ACS ${SERVICE} (non-production)" \
       org.opencontainers.image.source="https://github.com/48b2jjvqgd-del/Atlas-ACS"
