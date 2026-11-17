@@ -34,6 +34,9 @@ import type { RabbitMqConnector } from './connectors/rabbitmq.js';
  *     broker has accepted the message. Publishing is retried a bounded number of times.
  *   - Payloads are validated against the contract before publishing and after consuming.
  *   - Delivery is at-least-once: consumers must be idempotent, keyed on the event id.
+ *   - Order is NOT guaranteed (ADR-037): a consumer handles up to `prefetch` messages concurrently,
+ *     retried messages return after later ones, and producers relay concurrently. Consumers must be
+ *     order-independent.
  *   - A failing handler is retried with increasing delays (default 1s, 5s, 30s, 2m); after the last
  *     attempt the message is dead-lettered. Contract-invalid messages are dead-lettered at once.
  *     Nothing is silently dropped and nothing is requeued in a hot loop.

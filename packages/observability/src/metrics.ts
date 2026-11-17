@@ -15,7 +15,7 @@ export interface ServiceMetrics {
   accessDenied: Counter<'reason'>;
   /** Events consumed, by event type and outcome (acked, retried, dead-lettered). */
   messagesConsumed: Counter<'event_type' | 'outcome'>;
-  /** Outbox relay results, by outcome (published, failed). */
+  /** Outbox relay results, by outcome (published, failed, set-aside). */
   outboxRelayed: Counter<'outcome'>;
 }
 

@@ -72,6 +72,7 @@ describe('migrations', () => {
       '20261109090000_issuer-registry-foundations',
       '20261113090000_tenant-context-hardening',
       '20261113091000_stage-1a-synthetic-only',
+      '20261114090000_outbox-relay-sequence',
     ]);
     expect(up.identity?.length).toBeGreaterThan(0);
     expect(up.audit?.length).toBeGreaterThan(0);
@@ -85,7 +86,10 @@ describe('migrations', () => {
     const noop = await migrate({ databaseUrl: testUrl, direction: 'up' });
     expect(noop.issuer).toEqual([]);
 
-    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer', count: 4 });
+    // The newest identity migration rolls back and re-applies cleanly on its own as well.
+    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'identity', count: 1 });
+    await migrate({ databaseUrl: testUrl, direction: 'up' });
+    await migrate({ databaseUrl: testUrl, direction: 'down', owner: 'issuer', count: 5 });
     status = await migrationStatus(testUrl);
     expect(status.find((s) => s.schema === 'issuer')?.applied).toEqual([]);
     const tableGone = await admin(async () => {

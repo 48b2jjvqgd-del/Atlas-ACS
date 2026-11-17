@@ -102,7 +102,7 @@ Constraints are enforced in the database as well as in the API contract
 | ---------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `tenant`               | Issuer registry           | adds `internal_reference` (unique, `^[A-Z0-9][A-Z0-9-]{1,39}$`); lifecycle onboarding → active ⇄ suspended → offboarded (transitions enforced by the service); RLS on `id`; `is_synthetic` must be true (Stage 1A constraint, ADR-033) |
 | `tenant_configuration` | Versioned issuer settings | `(tenant_id, version)` PK; `settings` jsonb validated by `issuerSettingsSchema`; immutable (trigger); RLS; support contact email on a reserved domain (Stage 1A constraint)                                                            |
-| `outbox`               | Transactional outbox      | relayed to RabbitMQ, published rows deleted after 7 days                                                                                                                                                                               |
+| `outbox`               | Transactional outbox      | relayed to RabbitMQ in `relay_sequence` (insertion) order, best effort (ADR-037); published rows deleted after 7 days                                                                                                                  |
 
 **identity** (owner identity-service)
 

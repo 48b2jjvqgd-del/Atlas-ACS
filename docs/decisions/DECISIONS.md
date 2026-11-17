@@ -413,12 +413,19 @@ outlive its transaction on a pooled connection.
 
 **Limits, stated plainly.** Code holding the service's database credentials and able to run its own
 transactions (a compromised service process) can still declare platform-wide scope, because the service
-legitimately does so for platform administrators, relays and consumers. Closing that needs the database
-to verify a credential the service cannot mint, which is not achievable in Stage 1A without changing the
-architecture. **Options for production (not chosen yet):** separate deployables (and database roles) for
-platform-wide and tenant-scoped work, so a tenant-facing process has no role that can declare `all`;
-or a context signed by a component the service does not control (e.g. the gateway) and verified in the
-database. **Costs accepted:** every scoped transaction is assigned a transaction id (more xid
+legitimately does so for platform administrators, principal resolution and the audit consumer, and it
+can declare any tenant list, because the function validates only the form of a declaration (scope value,
+no nulls, no list with `all`) — the database does not know the end user, so it cannot know which
+tenants they may act for. RLS is therefore a defence against query mistakes and injection within a
+request, **not** against a compromised service process. Closing that needs the database to verify a
+credential the service cannot mint, which is not achievable in Stage 1A without changing the
+architecture. The precise boundary (what the database prevents, what the application prevents, what a
+compromised process can still do) is in SECURITY_MODEL.md, "Tenant isolation", and each property is
+asserted by `database-security.test.ts`, including the residual risk itself. **Options for production
+(not chosen yet):** separate deployables (and database roles) for platform-wide and tenant-scoped work,
+so a tenant-facing process has no role that can declare `all` (tenant lists stay unchecked); or a
+context signed by a component the service does not control (e.g. the gateway) and verified in the
+database, which also checks tenant lists; ideally both. **Costs accepted:** every scoped transaction is assigned a transaction id (more xid
 consumption, a write to an unlogged table); the context table is not replicated to standbys, so read
 replicas would need a different mechanism.
 
@@ -449,3 +456,30 @@ make a second account Platform Super Admin, and any holder of `platform.roles.ma
 permissions to a role they hold. Platform Super Admins are unaffected. **Not applied to issuer roles:**
 issuer user managers assign any issuer role within their issuer by design (ADR-026); they still cannot
 change their own roles.
+
+### ADR-037 Event ordering is best effort; consumers are idempotent and order-independent — _Proposed_
+
+**Decision.** ATLAS does not guarantee event order, within one producer or across producers. The
+transactional outbox guarantees no loss, at-least-once delivery, no double publish by concurrent relays
+(`FOR UPDATE SKIP LOCKED`) and that a poison row can neither block the outbox nor be dropped. As best
+effort, one relay publishes the rows it can see in insertion order (`relay_sequence`, replacing
+`created_at`) and keeps that order through a broker outage of any length. Every consumer must be
+idempotent (keyed on the event id) and must not depend on arrival order; a future consumer that applies
+state changes must compare a per-aggregate version carried in the event.
+
+**Why.** Investigation of the Stage 1A outbox showed that the documented "commit order" was not
+provided: `created_at` is the transaction's start time, so one transaction's events were unordered and
+overlapping transactions could be relayed out of commit order; several relay instances publish
+concurrently; consumers handle up to `prefetch` messages at once and retry failures after later ones;
+and the poison rule set rows aside during a long broker outage, reordering and delaying them. The only
+consumer in Stage 1A, audit-service, needs no order: records are deduplicated by event id and each chain
+is hashed in storage order under a per-chain lock, so any arrival order yields a valid chain
+(`outbox-ordering.test.ts`). **Changes made:** insertion-order relay; a row is set aside only once a row
+behind it has published (an outage is no longer mistaken for poison), in both the PostgreSQL relay and
+the gateway's Valkey outbox; unreadable gateway entries are kept, not deleted; a relay that loses its
+database connection no longer crashes the process. **Alternative rejected:** strict ordering through a
+single active relay per outbox (advisory lock) plus commit-ordered sequencing — it would serialise
+publishing and allow one poison row to stall everything behind it, and would still be undone by
+concurrent consumers and retry queues; no consumer needs it. If a later stage needs per-aggregate order
+(for example card status), the preferred design is an aggregate version checked by the consumer, not a
+global order.

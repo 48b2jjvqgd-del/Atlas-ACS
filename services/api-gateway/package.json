@@ -15,6 +15,11 @@
       "@atlas/source": "./src/rate-limit-store.ts",
       "types": "./dist/rate-limit-store.d.ts",
       "default": "./dist/rate-limit-store.js"
+    },
+    "./valkey-outbox": {
+      "@atlas/source": "./src/valkey-outbox.ts",
+      "types": "./dist/valkey-outbox.d.ts",
+      "default": "./dist/valkey-outbox.js"
     }
   },
   "scripts": {

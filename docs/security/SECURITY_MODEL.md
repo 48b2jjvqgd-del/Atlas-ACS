@@ -177,11 +177,86 @@ injected expression could widen a tenant-scoped transaction to every tenant. Now
 | SQL injection inside a request already running platform-wide (platform administrator, relay) | No         | That transaction legitimately sees every tenant                                                                                                                    |
 | A compromised service process using its own database credentials                             | **No**     | It can open its own transaction and declare platform-wide scope, as the service does for platform administrators. Only the application's authorisation stands here |
 
-The last row cannot be closed in Stage 1A without changing the architecture; ADR-034 lists the options
-for production (separate platform-wide and tenant-scoped deployables and roles, or a database-verified
-context signed outside the service). The database rules that do **not** depend on the tenant context
-— append-only audit, immutable configuration versions, synthetic-only records, permission-scope
-rules and read-only system roles — hold even against a compromised service's credentials.
+Two further rows complete the picture:
+
+| Threat                                                                                  | Protected? | How / why not                                                                                                                  |
+| --------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Removing or replacing the context with a savepoint rollback inside a scoped transaction | Yes        | `inScope()` declares at the top level before any application statement; a rolled-back subtransaction cannot undo it            |
+| Declaring another tenant's id, or one that does not exist                               | **No**     | The function checks the form of the declaration only; it has no way to know which tenants the end user may act for (see below) |
+
+### Verified properties of the tenant context
+
+All three implementations (`issuer`, `identity`, `audit`; migrations `*_tenant-context-hardening.sql`)
+are identical in structure and are exercised with each service's own credentials by
+`database-security.test.ts`:
+
+| Property                                                                      | Result                                                                                                                                                                                     |
+| ----------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Service roles cannot read or modify the context tables                        | Confirmed for all three roles: `SELECT`, `INSERT`, `UPDATE`, `DELETE`, `TRUNCATE` are refused; the accessors return only the caller's own current context                                  |
+| Service roles cannot call another service's context functions                 | Confirmed: no `USAGE` on other schemas, and `EXECUTE` revoked from `PUBLIC`                                                                                                                |
+| The context cannot be re-declared within a transaction                        | Confirmed, including from an injected expression inside a statement and from inside a savepoint; `ROLLBACK TO SAVEPOINT` leaves it in place                                                |
+| The context is tied to the backend and the transaction                        | Confirmed: keyed on `pg_backend_pid()` and the top-level transaction id (`xid8`, 64-bit, never reused); concurrent connections see only their own                                          |
+| Pooled connections cannot leak context between requests                       | Confirmed after `COMMIT`, `ROLLBACK` and implicit single-statement transactions, and through the service pool used by `inScope()`                                                          |
+| Session settings (`set_config`, `SET`) affect visibility                      | No: no policy reads a setting (`migrations.test.ts` checks every policy)                                                                                                                   |
+| A compromised service can declare arbitrary tenant ids or platform-wide scope | **Yes.** Any syntactically valid tenant list, including other or non-existent tenants, and `all` in any fresh transaction (pinned by "cannot judge whether a declared scope is justified") |
+
+### The remaining boundary, precisely
+
+**What the database prevents.** For every statement executed by a service role: seeing or changing a
+tenant row outside the declared context; widening, replacing or removing the context once declared in
+a transaction; carrying a context into another transaction or connection; using another service's
+schema, tables or context function; reading or writing the context table; disabling RLS or triggers
+(the service role owns nothing). Independently of the context, and even against the service's own
+credentials: updating or deleting audit records; changing configuration versions; creating
+non-synthetic issuers or users; giving a tenant role a platform-only, unknown or duplicate
+permission; changing system roles or the permission catalogue.
+
+**What the application prevents.** Which scope is declared. A request's scope is derived from the
+verified principal — a token verified against the IdP, the principal resolved by identity-service —
+after the route's deny-by-default access policy has checked the permission and, for tenant routes,
+that the path tenant is one of the principal's issuers (otherwise `404`, audited). `tenantScope()` and
+`scopeFor()` only ever receive tenant ids that passed that check. `systemScope` (platform-wide) is used
+only by service-internal work and by endpoints whose policy requires a platform-wide permission.
+
+**What a compromised service process could still do.** Code running with a service's database
+credentials (remote code execution in the service, a malicious dependency, a leaked password) can open
+its own transactions and declare any scope in **its own schema**: read and change every issuer and
+configuration (issuer-service), every user, membership and custom role (identity-service, within the
+permission-scope rules), or read every audit record and append records with valid hashes
+(audit-service). It cannot reach another service's schema, and the context-independent rules above
+still hold. Containing a compromised process is the job of the controls around it (separate
+credentials per service, no shared roles, monitoring), not of RLS.
+
+**Why platform-wide scope remains necessary.** Several legitimate operations are not tied to one
+tenant: the audit consumer appends events for every issuer (its insert policy requires `all`);
+identity-service resolves a principal by reading the user's memberships across all issuers;
+platform administrators (platform-wide permission, MFA required) list and manage every issuer and
+user; access-denied events with no business change are recorded in their own platform-wide
+transaction. Each of these
+runs in the same service process, with the same database role, as tenant-scoped requests.
+
+**Why the database cannot tell legitimate from compromised.** The database sees a login role and a
+function call. A platform administrator's request and a compromised process produce the same call,
+with the same credentials, on the same connection pool. The end user's identity and permissions are
+verified in the application; nothing reaches the database that it could check independently, and any
+proof the service merely passes along could be fabricated by the same service if the service is what
+holds or mints it. The same is true of tenant lists: the database does not know the user, so it
+cannot know which tenants they belong to.
+
+**What would close the gap** (none is chosen for Stage 1A; ADR-034):
+
+1. **Split platform-wide and tenant-scoped work** into separate deployables with separate database
+   roles, and split the context function so that only the platform/worker role can declare `all`. A
+   compromised tenant-facing process could then no longer declare platform-wide scope, but could still
+   declare any tenant list.
+2. **A context the service cannot mint**: the gateway or identity-service issues a short-lived signed
+   context (user, scope, tenant ids, expiry, nonce) with a key the service does not hold, and
+   `begin_tenant_context()` verifies the signature and refuses replays. This also closes arbitrary
+   tenant lists; a compromised service could still replay contexts of requests it actually receives,
+   for their lifetime. It needs a signature-verification extension and key management in the database.
+3. Combining 1 and 2, plus per-service broker credentials and audit anchoring, is the production
+   recommendation. Per-tenant database roles are not recommended: they
+   do not scale to many issuers and still leave platform-wide work needing a role that sees everything.
 
 ## Audit logging — _Implemented (Stage 1A); authentication decisions from Stage 1B_
 
@@ -200,11 +275,22 @@ rules and read-only system roles — hold even against a compromised service's c
 - Authentication decisions reference the exact configuration versions used (see DATA_MODEL.md).
 - Delivery uses a transactional outbox (PostgreSQL services) or a durable Valkey outbox (gateway), so
   a change cannot commit without its audit event and a broker outage delays but never loses events.
-  A failed publish backs off the relay rather than the row, so events still leave in commit order after
-  an outage; a row that keeps failing is set aside after five attempts so it cannot block the others,
-  and stays in the outbox (`last_error`, `attempts`) for investigation. Unroutable events are retained
-  by an alternate exchange (`atlas.events.unrouted`). Tested against a real broker outage
-  (`outbox-resilience.test.ts`).
+  Delivery is at-least-once (a relay that stops between the broker's confirm and its commit publishes
+  again) and **ordering is best effort, not guaranteed** (ADR-037): one relay publishes the rows it can
+  see in insertion order and a broker outage of any length does not reorder them, but overlapping
+  transactions can be relayed in a different order from the one they started in, several relay
+  instances publish concurrently, and consumers process concurrently and retry later. A row that keeps
+  failing is set aside only once a row behind it has published (so an outage is never mistaken for a
+  poison row); it stays in the outbox (`last_error`, `attempts`), is retried with its own back-off and
+  is logged at error level. The gateway's Valkey outbox behaves the same way (`outbox:set-aside`;
+  unreadable entries kept in `outbox:unreadable`). Unroutable events are retained by an alternate
+  exchange (`atlas.events.unrouted`). Tested with several relay instances, concurrent transactions, a
+  broker outage, a relay crash and poison rows (`outbox-resilience.test.ts`, `outbox-ordering.test.ts`,
+  `valkey-outbox.test.ts`).
+- The audit store does not depend on arrival order: records are keyed on the event id (duplicates
+  ignored) and each chain is hashed in the order records are stored (`sequence`), under a per-chain
+  lock. A chain therefore proves the integrity of what was stored, in storage order; `occurred_at` is
+  the producer's time and may not be monotonic along a chain.
 - The chain detects modification, deletion and reordering of stored records even by a database
   superuser (`audit-integrity.test.ts`). It cannot by itself detect removal of the newest records or
   records appended with valid hashes by someone holding audit-service credentials; anchoring chain
@@ -279,6 +365,8 @@ rules and read-only system roles — hold even against a compromised service's c
   caches and a bootstrap admin with a generated password. It is not a production configuration.
 - The local demo accounts share one generated password and a pre-enrolled TOTP secret (from `.env`).
 - Permission changes take up to 10 seconds to reach other services (principal cache).
+- Events are not ordered end to end (ADR-037). No Stage 1A consumer needs order; a future consumer
+  that applies state changes must use a per-aggregate version, not arrival order.
 - Audit events from producers are at-least-once; the consumer deduplicates by id. Chain heads are not
   yet anchored outside the database, so a database superuser could rebuild a chain consistently.
 - Failed sign-in events are ingested from Keycloak every 30 seconds (not real time).

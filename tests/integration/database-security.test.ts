@@ -244,17 +244,86 @@ describe('row-level security: tenant context held by the database (Finding 1)', 
     });
   });
 
-  it('keeps the context table out of reach of the service role', async () => {
+  it('keeps every context table out of reach of its own service role', async () => {
+    const withContext = ['issuer', 'identity', 'audit'];
+    for (const { service, schema } of serviceRoles().filter((r) =>
+      withContext.includes(r.schema),
+    )) {
+      await withClient(db.roleUrl(service), async (client) => {
+        for (const statement of [
+          `SELECT * FROM ${schema}.tenant_context`,
+          `INSERT INTO ${schema}.tenant_context VALUES (pg_backend_pid(), pg_current_xact_id(), 'all', '{}')`,
+          `UPDATE ${schema}.tenant_context SET scope = 'all'`,
+          `DELETE FROM ${schema}.tenant_context`,
+          `TRUNCATE ${schema}.tenant_context`,
+        ]) {
+          await expect(client.query(statement), `${service}: ${statement}`).rejects.toThrow(
+            /permission denied/,
+          );
+        }
+        // The accessors reveal only the caller's own current context, never other backends'.
+        const own = await client.query<{ all: boolean; ids: string[] }>(
+          `SELECT ${schema}.tenant_context_all() AS all, ${schema}.tenant_context_ids() AS ids`,
+        );
+        expect(own.rows[0], service).toEqual({ all: false, ids: [] });
+      });
+    }
+  });
+
+  it('survives savepoints: a rolled-back subtransaction can neither remove nor replace the context', async () => {
     await asIssuerService(async (client) => {
-      for (const statement of [
-        'SELECT * FROM issuer.tenant_context',
-        `INSERT INTO issuer.tenant_context VALUES (pg_backend_pid(), pg_current_xact_id(), 'all', '{}')`,
-        "UPDATE issuer.tenant_context SET scope = 'all'",
-        'DELETE FROM issuer.tenant_context',
-        'TRUNCATE issuer.tenant_context',
-      ]) {
-        await expect(client.query(statement), statement).rejects.toThrow(/permission denied/);
-      }
+      await scoped(client, 'issuer', 'tenant', [TENANT_A], async () => {
+        await client.query('SAVEPOINT inner_work');
+        // Visible inside the subtransaction: the context is keyed on the top-level transaction id.
+        const inside = await client.query<{ id: string }>('SELECT id FROM issuer.tenant');
+        expect(tenantIds(inside.rows)).toEqual([TENANT_A]);
+        await expect(
+          client.query("SELECT issuer.begin_tenant_context('all', '{}')"),
+        ).rejects.toThrow(/already set for this transaction/);
+        await client.query('ROLLBACK TO SAVEPOINT inner_work');
+        const after = await client.query<{ id: string }>('SELECT id FROM issuer.tenant');
+        expect(tenantIds(after.rows)).toEqual([TENANT_A]);
+        await expect(
+          client.query("SELECT issuer.begin_tenant_context('all', '{}')"),
+        ).rejects.toThrow(/already set for this transaction/);
+      });
+      // A declaration made *inside* a savepoint is undone with it, which is why inScope() declares
+      // at the top level, before any application statement runs.
+      await scoped(client, 'issuer', null, [], async () => {
+        await client.query('SAVEPOINT declared_inside');
+        await client.query(`SELECT issuer.begin_tenant_context('tenant', ARRAY[$1]::uuid[])`, [
+          TENANT_A,
+        ]);
+        await client.query('ROLLBACK TO SAVEPOINT declared_inside');
+        expect((await client.query('SELECT id FROM issuer.tenant')).rowCount).toBe(0);
+      });
+    });
+  });
+
+  it('cannot judge whether a declared scope is justified (documented residual risk)', async () => {
+    // What a compromised service process holding its own credentials can do, pinned here so the
+    // documentation (SECURITY_MODEL.md, "Tenant isolation"; ADR-034) cannot drift from reality.
+    await asIssuerService(async (client) => {
+      // Any syntactically valid tenant id is accepted, existing or not, and so is another tenant's.
+      const unknownTenant = randomUUID();
+      const other = await scoped(client, 'issuer', 'tenant', [TENANT_B, unknownTenant], () =>
+        client.query<{ id: string }>('SELECT id FROM issuer.tenant'),
+      );
+      expect(tenantIds(other.rows)).toEqual([TENANT_B]);
+      // A fresh transaction may declare platform-wide scope, exactly as a relay or a platform
+      // administrator's request legitimately does.
+      const platform = await scoped(client, 'issuer', 'all', [], () =>
+        client.query<{ id: string }>('SELECT id FROM issuer.tenant WHERE id = ANY($1)', [
+          [TENANT_A, TENANT_B],
+        ]),
+      );
+      expect(tenantIds(platform.rows)).toEqual([TENANT_A, TENANT_B].sort());
+    });
+    await withClient(db.roleUrl('audit-service'), async (client) => {
+      const platformRows = await scoped(client, 'audit', 'all', [], () =>
+        client.query('SELECT id FROM audit.audit_record WHERE tenant_id IS NULL'),
+      );
+      expect(platformRows.rowCount).toBeGreaterThan(0);
     });
   });
 
