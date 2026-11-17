@@ -382,10 +382,14 @@ cannot know which tenants they belong to.
 
 The CI audit gate (`node scripts/audit-gate.mjs`) fails on any **high** or **critical** advisory,
 except a temporary exception recorded below **and** in `scripts/audit-exceptions.json`. The gate applies
-an exception only while every finding stays inside its scope — one advisory, one package, the recorded
-versions, the recorded development/build dependency paths, and absent from the production-only audit —
-and fails once the review date passes, once a patched version is published, or once the exception no
-longer matches anything. Moderate advisories do not fail the gate (unchanged). `pnpm audit:deps` runs the same gate locally;
+an exception only when it positively establishes that the advisory is inside its scope — the same
+advisory, package and severity, only the recorded versions, at least one finding with at least one
+dependency path, every path under the recorded development/build prefixes, and absent from the
+production-only audit (which may never contain a high or critical advisory). Missing, empty or
+malformed evidence — audit output, advisories, severities, findings, paths, or the exception register
+itself — fails the gate. The exception expires at **00:00 UTC on its review date** and is not accepted on
+that date; the gate also fails once a patched version is published or once the exception no longer
+matches anything. Moderate advisories do not fail the gate (unchanged). `pnpm audit:deps` runs the same gate locally;
 `pnpm audit:deps:raw` runs the plain `pnpm audit`, which still reports the excepted advisory.
 
 ### Temporary high-severity exceptions
@@ -401,5 +405,5 @@ longer matches anything. Moderate advisories do not fail the gate (unchanged). `
 | Justification     | Reached only by developer and CI tooling; glob patterns come from repository configuration, not from users or requests                                                                                                                                                               |
 | Residual risk     | A crafted pattern in repository configuration or a malicious development dependency could stall a developer or CI build (denial of service). No runtime exposure                                                                                                                     |
 | Owner             | Project owner (Stage 1A approver)                                                                                                                                                                                                                                                    |
-| Approved / review | 2026-11-17 / **2026-12-01** (14 days). The gate fails after the review date                                                                                                                                                                                                          |
+| Approved / review | 2026-11-17 / **2026-12-01** (14 days). Accepted until 2026-11-30 (UTC) inclusive; the gate fails from 00:00 UTC on 2026-12-01                                                                                                                                                        |
 | Removal           | Remove the exception once an official patched `picomatch` release is available and verified, and upgrade. Check for an upstream fix at every dependency review. No forks, unofficial patches or forced overrides                                                                     |
