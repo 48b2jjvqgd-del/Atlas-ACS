@@ -339,8 +339,8 @@ importers:
         specifier: ^13.2.0
         version: 13.2.0
       amqplib:
-        specifier: ^2.2.1
-        version: 2.2.1
+        specifier: ^2.3.2
+        version: 2.3.2
       fastify:
         specifier: ^5.12.8
         version: 5.12.8
@@ -1606,8 +1606,8 @@ packages:
   ajv@8.20.0:
     resolution: {integrity: sha512-Thbli+OlOj+iMPYFBVBfJ3OmCAnaSyNn4M1vz9T6Gka5Jt9ba/HIR56joy65tY6kx/FCF5VXNB819Y7/GUrBGA==}
 
-  amqplib@2.2.1:
-    resolution: {integrity: sha512-J3JjAydC2vJ/AgkgVAE0kVH5M4RNfm51zUaspHpwSai3W35lD3hKryvYY/xqMnYcNfR66NYL06Eik+Adn293dQ==}
+  amqplib@2.3.2:
+    resolution: {integrity: sha512-wqu6P3V2AdCCXSsXcsF5BXM2ykxLoCh3uVG0XX07HMQrTgwNUb+GT1G1s+8R9kOQYIux2xT/xf7Bzf7/cyKMag==}
     engines: {node: '>=18'}
 
   ansi-regex@5.0.1:
@@ -3583,7 +3583,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  amqplib@2.2.1: {}
+  amqplib@2.3.2: {}
 
   ansi-regex@5.0.1: {}
 
