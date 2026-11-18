@@ -5,17 +5,17 @@ identifiers are referenced by the portal's placeholders, the compliance matrix a
 changing them requires updating those references. Final stage structure approved at the Stage 0 final
 review (ADR-022).
 
-| Stage | Name                                                                  | Status                                            |
-| ----- | --------------------------------------------------------------------- | ------------------------------------------------- |
-| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)            |
-| 1A    | Platform security and issuer foundations                              | **Final remediation — awaiting final acceptance** |
-| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                         |
-| 2     | Fraud and decision engine                                             | Planned                                           |
-| 3     | Challenge engine                                                      | Planned                                           |
-| 4     | Compliance engine                                                     | Planned                                           |
-| 5     | Reporting and analytics                                               | Planned                                           |
-| 6     | Demonstration and performance testing                                 | Planned                                           |
-| 7     | Migration, authorised scheme integration and certification            | Planned                                           |
+| Stage | Name                                                                  | Status                                                                                                    |
+| ----- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)                                                                    |
+| 1A    | Platform security and issuer foundations                              | **Complete**: merged to `main` (PR #7, `04f57b2`); four findings remain open as Stage 1B entry conditions |
+| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                                                                                 |
+| 2     | Fraud and decision engine                                             | Planned                                                                                                   |
+| 3     | Challenge engine                                                      | Planned                                                                                                   |
+| 4     | Compliance engine                                                     | Planned                                                                                                   |
+| 5     | Reporting and analytics                                               | Planned                                                                                                   |
+| 6     | Demonstration and performance testing                                 | Planned                                                                                                   |
+| 7     | Migration, authorised scheme integration and certification            | Planned                                                                                                   |
 
 Each stage is independent and has its own acceptance criteria. In particular, fraud/decisioning (2) and
 challenge (3) are **not** part of Stage 1B.
@@ -31,6 +31,13 @@ _No business logic._
 
 Goal: no sensitive domain functionality is built until identity, isolation, least privilege and
 auditability are in place and tested. Includes issuer administration and RBAC.
+
+**Status: complete.** Stage 1A implementation and remediation are complete. PR #7 was merged into
+`main` with merge commit `04f57b26b5db934c7402a484195f87d7c364395e`; all six CI jobs had passed on
+its head (`e5a78d3`, run 44409816635). Merging did **not** resolve the outstanding findings:
+F-02, F-04, F-08 and the shared RabbitMQ credentials remain open and are mandatory Stage 1B entry
+conditions ("Stage 1B entry conditions" below). ADR-024 to ADR-038 remain _Proposed_. **Stage 1B
+has not started.**
 
 | #   | Deliverable                                                                                                                                                                                                                                                      | Acceptance evidence                                                                                            |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -103,7 +110,9 @@ anchoring of audit chain heads, session listing per user.
 
 ## Stage 1B — ACS protocol foundation and simulated Visa/Mastercard DS connectivity
 
-Prerequisite: Stage 1A complete, because 1B introduces authentication transaction data.
+Prerequisite: Stage 1A complete, because 1B introduces authentication transaction data. Stage 1A is
+complete (merged, PR #7); the four entry conditions below are additional prerequisites and are
+**not** met. **Stage 1B has not started.**
 
 **Stage 1B entry conditions** (four, all mandatory and all **open**). Each needs its own design and
 implementation task and owner approval. Stage 1B work may not start until all four have been
@@ -111,12 +120,20 @@ implemented, tested and independently reviewed. Completing or merging Stage 1A d
 Stage 1B, and does not resolve or accept these findings.
 
 1. **F-02: PostgreSQL tenant isolation.**
-   - Complete tenant-isolation RLS coverage for tenant-owned tables, specifically the
-     tenant-attributable rows of `issuer.outbox`, `identity.outbox` and `identity.user_account`.
-   - Automated tests proving tenant isolation on those tables.
+   - **Required outcome:** no issuer can reach another issuer's tenant-attributable data through
+     application queries, outbox records, user-directory access or other database access paths,
+     with the protection enforced in the database. All tenant-attributable data is protected,
+     including the exposure in `issuer.outbox`, `identity.outbox` and `identity.user_account`.
+   - **Implementation decision (open):** the F-02 design and implementation work selects the
+     mechanism. Options include tenant-isolation RLS, tenant-scoped database functions for the user
+     directory, and data minimisation or prompt purging of published outbox payloads, or a
+     combination (SECURITY_MODEL "Future requirements"). Whatever is chosen must meet the outcome
+     for every row, including outbox rows not yet published, and needs owner approval.
+   - Automated tests proving tenant isolation for the selected mechanism on those tables.
    - A catalogue test that every table holding tenant data has a policy (SECURITY_MODEL
      "Row-level security coverage by table").
-   - No claim of universal RLS coverage until this is independently verified.
+   - No claim of universal RLS coverage, or of complete tenant isolation, until this is
+     independently reviewed.
 2. **F-04: Valkey service isolation.**
    - An individual Valkey identity (ACL user) for each service that needs Valkey.
    - Least-privilege ACLs: each service reaches only the key prefixes and commands it requires.
