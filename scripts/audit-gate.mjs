@@ -9,7 +9,9 @@
  *     package and starting with one of the recorded development/build path prefixes;
  *   - the advisory does not appear in the production-only audit (`pnpm audit --prod`), which may
  *     never contain a high or critical advisory at all;
- *   - no patched version has been published;
+ *   - the audit output explicitly states that no fix exists (`patched_versions: null` together
+ *     with `patched_versions_unpublished: true`); a missing, null-only, malformed or patched value
+ *     fails (see `noFixProblem`);
  *   - the current UTC date is *before* `reviewBy`: the exception expires at 00:00 UTC on that date
  *     and is not accepted on it.
  * Fail closed: missing, empty or malformed evidence (audit output, advisories, findings, paths,
@@ -58,6 +60,31 @@ export function validateExceptions(exceptions) {
   return problems;
 }
 
+/**
+ * An exception may apply only while the audit output *positively states* that no fix exists.
+ *
+ * pnpm 12 reports an advisory without an available fix as
+ *   { "patched_versions": null, "patched_versions_unpublished": true }
+ * (pnpm CHANGELOG: "`--json` output … now returns `patched_versions: null` for advisories whose
+ * inferred patch is not available"; verified against the raw output for GHSA-fc5q-39xc-vjpf), and
+ * an advisory with a fix as { "patched_versions": ">=x.y.z" } with no `patched_versions_unpublished`.
+ * A bare `null`, a missing field, the older npm form "<0.0.0", or any other shape is not that
+ * statement, so the gate fails closed and the representation must be re-verified before the
+ * exception can apply again. Returns the problem, or undefined when "no fix" is established.
+ */
+export function noFixProblem(advisory) {
+  const hasPatched = Object.hasOwn(advisory, 'patched_versions');
+  const patched = advisory.patched_versions;
+  const unpublished = advisory.patched_versions_unpublished;
+  if (isText(patched) && patched !== '<0.0.0' && unpublished === undefined)
+    return `a patched version is available (${patched}): upgrade and remove the exception`;
+  if (!hasPatched) return 'patched_versions missing: cannot establish that no fix exists';
+  if (patched === null && unpublished === true) return undefined;
+  if (patched === null)
+    return 'patched_versions is null without patched_versions_unpublished: true; cannot establish that no fix exists';
+  return `malformed patched_versions evidence (${JSON.stringify(patched).slice(0, 40)}, unpublished=${JSON.stringify(unpublished)}): cannot establish that no fix exists`;
+}
+
 /** Problems that keep an advisory outside its exception's scope (empty = in scope). */
 function scopeProblems(advisory, exception, prodIds, today) {
   const problems = [];
@@ -69,14 +96,8 @@ function scopeProblems(advisory, exception, prodIds, today) {
     );
   if (today >= exception.reviewBy)
     problems.push(`exception expired at 00:00 UTC on ${exception.reviewBy}`);
-  const patched = advisory.patched_versions;
-  if (patched !== null && patched !== undefined && patched !== '<0.0.0') {
-    problems.push(
-      isText(patched)
-        ? `a patched version is available (${patched}): upgrade and remove the exception`
-        : 'malformed patched_versions',
-    );
-  }
+  const patchProblem = noFixProblem(advisory);
+  if (patchProblem) problems.push(patchProblem);
   if (prodIds.has(advisory.github_advisory_id)) problems.push('reaches a production dependency');
 
   const findings = advisory.findings;

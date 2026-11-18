@@ -24,7 +24,9 @@ import type { TenantScope } from '../auth/access.js';
  * administrators, or any tenant list (the database checks only the form of a declaration; it does
  * not know the end user). Which scope is declared is decided by the application's access policy.
  * RLS therefore protects against query mistakes and injection within a request, not against a
- * compromised service process. See SECURITY_MODEL.md, "Tenant isolation", and ADR-034.
+ * compromised service process — and only for tables that have policies: the outboxes and
+ * identity.user_account have none, so a scope declared here does not limit what a query sees in
+ * them. See SECURITY_MODEL.md, "Tenant isolation", and ADR-034.
  *
  * The context is declared at the top level, before `work` runs, so a savepoint rolled back inside
  * `work` cannot remove it.

@@ -470,8 +470,12 @@ describe('the audit consumer does not depend on order', () => {
     cleanup.push(async () => {
       await subscription.cancel();
       const channel = await (await consumer.connection()).createChannel();
-      for (const suffix of ['', '.dlq', '.retry.1', '.retry.2'])
-        await channel.deleteQueue(`${subscription.queue}${suffix}`).catch(() => undefined);
+      for (const queue of [
+        subscription.queue,
+        subscription.deadLetterQueue,
+        ...subscription.retryQueues,
+      ])
+        await channel.deleteQueue(queue).catch(() => undefined);
     });
 
     const activity = (service: ServiceName, n: number, tenantId: string | undefined) =>

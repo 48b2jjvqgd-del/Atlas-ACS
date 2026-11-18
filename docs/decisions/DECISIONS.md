@@ -7,8 +7,9 @@ Decision log in lightweight ADR form.
   (2026-11-08).
 - **Accepted (general approval)** — approved by the owner as general architectural decisions at the
   Stage 0 final review (2026-11-08); documentation and rationale retained.
-- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-032 are proposed with Stage 1A and are
-  implemented on the Stage 1A branch for review.
+- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-037 are proposed with Stage 1A (033–037
+  from the Stage 1A security remediation) and are implemented on the Stage 1A branch for review.
+  Several record residual risks that are accepted only once the owner accepts the ADR.
 
 | ADR | Decision                                                                     | Status                             |
 | --- | ---------------------------------------------------------------------------- | ---------------------------------- |
@@ -44,6 +45,11 @@ Decision log in lightweight ADR form.
 | 030 | A second factor is required for platform-wide permissions                    | Proposed (Stage 1A)                |
 | 031 | Event contracts may have several producers                                   | Proposed (Stage 1A)                |
 | 032 | Cross-tenant access returns 404 and is audited on the platform chain         | Proposed (Stage 1A)                |
+| 033 | Stage 1A stores synthetic records only, enforced by the database             | Proposed (Stage 1A)                |
+| 034 | Row-level-security context held by the database, set once per transaction    | Proposed (Stage 1A)                |
+| 035 | The database enforces permission scopes and protects system roles            | Proposed (Stage 1A)                |
+| 036 | Privilege ceiling and no self-change for platform administration             | Proposed (Stage 1A)                |
+| 037 | Event ordering is best effort; consumers idempotent and order-independent    | Proposed (Stage 1A)                |
 
 ---
 
@@ -417,7 +423,10 @@ legitimately does so for platform administrators, principal resolution and the a
 can declare any tenant list, because the function validates only the form of a declaration (scope value,
 no nulls, no list with `all`) — the database does not know the end user, so it cannot know which
 tenants they may act for. RLS is therefore a defence against query mistakes and injection within a
-request, **not** against a compromised service process. Closing that needs the database to verify a
+request — on the four tables that have policies (`issuer.tenant`, `issuer.tenant_configuration`,
+`identity.tenant_role_assignment`, `audit.audit_record`), not on the outboxes or
+`identity.user_account`, which hold tenant-attributable data without RLS (final review F-02;
+remediation before Stage 1B) — and **not** against a compromised service process. Closing that needs the database to verify a
 credential the service cannot mint, which is not achievable in Stage 1A without changing the
 architecture. The precise boundary (what the database prevents, what the application prevents, what a
 compromised process can still do) is in SECURITY_MODEL.md, "Tenant isolation", and each property is
@@ -483,3 +492,50 @@ publishing and allow one poison row to stall everything behind it, and would sti
 concurrent consumers and retry queues; no consumer needs it. If a later stage needs per-aggregate order
 (for example card status), the preferred design is an aggregate version checked by the consumer, not a
 global order.
+
+### ADR-038 Quorum delay queues and at-least-once dead-lettering; versioned queue topology — _Proposed_
+
+**Decision.** Every queue of a subscription is a durable quorum queue, and every queue that
+dead-letters does so at least once: main queue `<service>.<name>.v2` and delay queues
+`<service>.<name>.v2.retry.<n>` declare `x-dead-letter-strategy: at-least-once` with `x-overflow:
+reject-publish`; the main queue also declares `x-delivery-limit: 20`. The dead-letter queue
+`<service>.<name>.v2.dlq` declares `x-delivery-limit: -1`. Because RabbitMQ cannot change these
+arguments on an existing queue, the queues get new (`.v2`) names; version-2 consumers unbind and drain
+the version-1 queues automatically, and an operator tool retires them (refusing while they hold
+messages or have consumers) or rolls back. Delivery stays at least once; consumers stay idempotent.
+Details, migration and rollback: [MESSAGING.md](../architecture/MESSAGING.md).
+
+**Why.** Final review F-01: a real broker restart (`broker-restart.test.ts`) lost events waiting in
+the classic delay queues. On recovery the broker dead-lettered them to the main quorum queue at most
+once, before that queue had a leader ("leader not known. Command is dropped"). Verified against
+RabbitMQ 4.4.0: with at-least-once dead-lettering an expired message whose target is unavailable stays
+in its source queue and is delivered later; with the default strategy, **or with at-least-once but
+without `reject-publish`**, it is dropped. The main queue's path to the dead-letter queue had the same
+weakness. The investigation found a second loss path: the version-1 dead-letter queue inherited RabbitMQ
+4's default quorum delivery limit (20) with no dead-letter target, so a dead letter inspected and
+returned 20 times was deleted; poison messages were therefore not reliably recoverable. Redeclaring
+existing queues with the new arguments is refused (`406 inequivalent arg`), and `queue.delete` with
+`if-empty` is not supported for quorum queues (it closes the connection), which shaped the retirement
+design (consumer-count precondition instead).
+
+**Alternatives rejected.** _Broker policies_ (`dead-letter-strategy`, `overflow` applied by policy to
+existing queues): avoids renaming, but the guarantee would live in broker configuration outside the
+code and outside the tests of each environment, and a missing policy silently restores at-most-once.
+_Consumer-side moves only_ (the consumer publishes every dead letter and every retry return itself):
+cannot cover TTL expiry or the delivery limit, which only the broker performs. _A delayed-message
+plugin_: not a quorum queue, keeps delayed messages in a non-replicated store. _Deleting and
+re-creating the queues_: loses whatever they hold.
+
+**Consequences.** Recovery of messages that expire during broker recovery may take up to the broker's
+dead-letter confirm timeout (3 min). Duplicates remain possible and are absorbed by idempotent
+consumers. A rollback reintroduces at-most-once dead-lettering until version 2 is redeployed. The local
+broker is a single node; replication (three nodes) is a production requirement (Stage 7).
+
+**Final verification (review of this ADR's implementation).** Three further loss paths were closed:
+internal publishes straight to a queue (retries, dead-letter copies, moves, replays) are `mandatory`,
+because the default exchange confirms and drops a message for a deleted queue; version-2 consumers
+re-unbind the version-1 queue on every poll and retirement unbinds it before checking, so a binding
+re-created by a version-1 instance cannot outlive it; rollback refuses while version-2 consumers run,
+declares the version-1 dead-letter queue, and finishes only after a final empty pass. Replay keeps the
+failure history in `x-atlas-death-history`, because RabbitMQ 4 restarts `x-death` when a replayed
+message dies again.

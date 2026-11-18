@@ -22,7 +22,8 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "messaging-topology": "tsx --conditions=@atlas/source --env-file-if-exists=../../.env src/cli/messaging-topology.ts"
   },
   "dependencies": {
     "@atlas/contracts": "workspace:*",

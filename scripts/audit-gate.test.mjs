@@ -11,7 +11,9 @@ const advisory = (overrides = {}) => ({
   github_advisory_id: 'GHSA-fc5q-39xc-vjpf',
   module_name: 'picomatch',
   severity: 'high',
+  // pnpm 12's representation of "no fix available" (verified against raw `pnpm audit --json`).
   patched_versions: null,
+  patched_versions_unpublished: true,
   findings: [
     {
       version: '4.0.7',
@@ -89,7 +91,9 @@ describe('dependency audit gate', () => {
     ).toEqual([expect.stringContaining('expired')]);
     expect(
       evaluate({
-        full: report(advisory({ patched_versions: '>=4.0.8' })),
+        full: report(
+          advisory({ patched_versions: '>=4.0.8', patched_versions_unpublished: undefined }),
+        ),
         prod: empty,
         exceptions,
         today,
@@ -238,12 +242,81 @@ describe('dependency audit gate fails closed', () => {
   });
 
   it('is invalidated by a published patched version', () => {
-    expect(failuresFor(advisory({ patched_versions: '>=4.0.8' }))).toEqual([
-      expect.stringContaining('patched version is available'),
-    ]);
+    expect(
+      failuresFor(
+        advisory({ patched_versions: '>=4.0.8', patched_versions_unpublished: undefined }),
+      ),
+    ).toEqual([expect.stringContaining('patched version is available')]);
     expect(failuresFor(advisory({ patched_versions: 4 }))).toEqual([
       expect.stringContaining('malformed patched_versions'),
     ]);
+  });
+
+  // F-07 (final review): "no fix exists" must be stated explicitly by the audit output; the absence
+  // of a patched version is not evidence that none exists.
+  describe('requires explicit evidence that no fix exists', () => {
+    const { patched_versions: _p, ...withoutPatched } = advisory();
+
+    it('accepts only pnpm’s explicit no-fix representation', () => {
+      expect(failuresFor(advisory())).toEqual([]);
+    });
+
+    it('fails when patched_versions is missing', () => {
+      expect(failuresFor(withoutPatched)).toEqual([
+        expect.stringContaining('patched_versions missing'),
+      ]);
+      const { patched_versions_unpublished: _u, ...neither } = withoutPatched;
+      expect(failuresFor(neither)).toEqual([expect.stringContaining('patched_versions missing')]);
+    });
+
+    it('fails when patched_versions is null without the unpublished flag', () => {
+      for (const unpublished of [undefined, false, null, 'true', 1]) {
+        const a = advisory({ patched_versions_unpublished: unpublished });
+        if (unpublished === undefined) delete a.patched_versions_unpublished;
+        expect(failuresFor(a), String(unpublished)).toEqual([
+          expect.stringContaining('cannot establish that no fix exists'),
+        ]);
+      }
+    });
+
+    it('fails on an unexpected type', () => {
+      for (const patched of [4, true, false, {}, [], ['>=4.0.8']]) {
+        expect(
+          failuresFor(advisory({ patched_versions: patched })),
+          JSON.stringify(patched),
+        ).toEqual([expect.stringContaining('malformed patched_versions')]);
+      }
+    });
+
+    it('fails on malformed or contradictory values', () => {
+      for (const [patched, unpublished] of [
+        ['', true],
+        ['', undefined],
+        ['<0.0.0', undefined], // npm's older form; not what pnpm 12 emits, so not accepted
+        ['<0.0.0', true],
+        ['>=4.0.8', true], // a range *and* "unpublished": contradictory
+        ['>=4.0.8', false],
+      ]) {
+        const a = advisory({
+          patched_versions: patched,
+          patched_versions_unpublished: unpublished,
+        });
+        if (unpublished === undefined) delete a.patched_versions_unpublished;
+        expect(failuresFor(a), JSON.stringify([patched, unpublished])).toEqual([
+          expect.stringContaining('cannot establish that no fix exists'),
+        ]);
+      }
+    });
+
+    it('fails when a patched version exists', () => {
+      for (const patched of ['>=4.0.8', '>=4.0.8 <5.0.0 || >=5.0.1']) {
+        const a = advisory({ patched_versions: patched });
+        delete a.patched_versions_unpublished;
+        expect(failuresFor(a), patched).toEqual([
+          expect.stringContaining('patched version is available'),
+        ]);
+      }
+    });
   });
 
   it('fails closed on unreadable or malformed audit output', () => {

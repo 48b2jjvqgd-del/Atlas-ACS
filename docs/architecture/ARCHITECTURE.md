@@ -110,7 +110,10 @@ Services make every authorisation decision. The database then enforces, independ
 tenant row visibility (RLS), the permission-scope rules and read-only system roles, synthetic-only
 records, append-only audit and immutable configuration versions. The database guarantees hold against
 query mistakes and SQL injection within a request; they do not hold against a fully compromised service
-process using its own credentials, except where noted (SECURITY_MODEL.md, "Tenant isolation").
+process using its own credentials, except where noted (SECURITY_MODEL.md, "Tenant isolation"). Tenant
+row visibility is enforced on four tables only (`issuer.tenant`, `issuer.tenant_configuration`,
+`identity.tenant_role_assignment`, `audit.audit_record`); the outboxes and `identity.user_account` hold
+tenant-attributable data without RLS (remediation before Stage 1B).
 
 ## Services and responsibilities
 
@@ -201,15 +204,15 @@ Details — headers, timeouts, retries, topology, delivery guarantees — are in
 
 ## Infrastructure
 
-| Component                 | Role                                                                                                 | Local image                                             |
-| ------------------------- | ---------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| PostgreSQL 18             | Primary relational store, schema per service                                                         | `postgres:18.6-alpine`                                  |
-| Valkey 9                  | Low-latency transient state (transaction/challenge sessions, rate limits); Redis-protocol compatible | `valkey/valkey:9.1.3-alpine`                            |
-| RabbitMQ 4                | Event bus (topic exchange, quorum queues, dead-lettering)                                            | `rabbitmq:4.4.0-management-alpine`                      |
-| Keycloak 26               | OpenID Connect provider: portal sign-in (with TOTP), service clients, user administration            | `quay.io/keycloak/keycloak:26.8.0`                      |
-| Jaeger 2                  | OTLP trace receiver and trace UI (Stage 1A)                                                          | `jaegertracing/jaeger:2.22.0`                           |
-| Mailpit                   | Captures email locally (future OTP-by-email simulation)                                              | `axllent/mailpit:v1.33.0`                               |
-| Prometheus 3 / Grafana 13 | Metrics collection and dashboards                                                                    | `prom/prometheus:v3.16.0`, `grafana/grafana-oss:13.0.2` |
+| Component                 | Role                                                                                                  | Local image                                             |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| PostgreSQL 18             | Primary relational store, schema per service                                                          | `postgres:18.6-alpine`                                  |
+| Valkey 9                  | Low-latency transient state (transaction/challenge sessions, rate limits); Redis-protocol compatible  | `valkey/valkey:9.1.3-alpine`                            |
+| RabbitMQ 4                | Event bus (topic exchange, quorum queues, at-least-once dead-lettering; [MESSAGING.md](MESSAGING.md)) | `rabbitmq:4.4.0-management-alpine`                      |
+| Keycloak 26               | OpenID Connect provider: portal sign-in (with TOTP), service clients, user administration             | `quay.io/keycloak/keycloak:26.8.0`                      |
+| Jaeger 2                  | OTLP trace receiver and trace UI (Stage 1A)                                                           | `jaegertracing/jaeger:2.22.0`                           |
+| Mailpit                   | Captures email locally (future OTP-by-email simulation)                                               | `axllent/mailpit:v1.33.0`                               |
+| Prometheus 3 / Grafana 13 | Metrics collection and dashboards                                                                     | `prom/prometheus:v3.16.0`, `grafana/grafana-oss:13.0.2` |
 
 OpenTelemetry tracing is enabled by setting `OTEL_EXPORTER_OTLP_ENDPOINT` (Compose points it at
 Jaeger). Instrumented: inbound and outbound HTTP (including `fetch`), PostgreSQL queries within a

@@ -86,10 +86,17 @@ function setup(name: string) {
   return { connector, publisher, connectionName };
 }
 
-async function deleteQueues(connector: ReturnType<typeof setup>['connector'], queue: string) {
+async function deleteQueues(
+  connector: ReturnType<typeof setup>['connector'],
+  subscription: Subscription,
+) {
   const channel = await (await connector.connection()).createChannel();
-  for (const suffix of ['', '.dlq', '.retry.1', '.retry.2', '.retry.3'])
-    await channel.deleteQueue(`${queue}${suffix}`).catch(() => undefined);
+  for (const queue of [
+    subscription.queue,
+    subscription.deadLetterQueue,
+    ...subscription.retryQueues,
+  ])
+    await channel.deleteQueue(queue).catch(() => undefined);
   await channel.close().catch(() => undefined);
 }
 
@@ -107,7 +114,7 @@ describe('RabbitMQ resilience', () => {
     });
     cleanup.push(async () => {
       await subscription.cancel();
-      await deleteQueues(connector, subscription.queue);
+      await deleteQueues(connector, subscription);
     });
 
     await publisher.publish(activityRecordedV1, event(1), { correlationId: randomUUID() });
@@ -137,7 +144,7 @@ describe('RabbitMQ resilience', () => {
     });
     cleanup.push(async () => {
       await subscription.cancel();
-      await deleteQueues(connector, subscription.queue);
+      await deleteQueues(connector, subscription);
     });
     const started = Date.now();
     await publisher.publish(activityRecordedV1, event(3), { correlationId: randomUUID() });
@@ -162,12 +169,12 @@ describe('RabbitMQ resilience', () => {
     });
     cleanup.push(async () => {
       await subscription.cancel();
-      await deleteQueues(connector, subscription.queue);
+      await deleteQueues(connector, subscription);
     });
     await publisher.publish(activityRecordedV1, event(4), { correlationId: randomUUID() });
     const channel = await (await connector.connection()).createChannel();
     await eventually(
-      async () => (await channel.checkQueue(`${subscription.queue}.dlq`)).messageCount === 1,
+      async () => (await channel.checkQueue(subscription.deadLetterQueue)).messageCount === 1,
     );
     await channel.close();
     expect(attempts).toBe(3); // first delivery + two retries
@@ -191,7 +198,7 @@ describe('RabbitMQ resilience', () => {
     });
     cleanup.push(async () => {
       await subscription.cancel();
-      await deleteQueues(connector, subscription.queue);
+      await deleteQueues(connector, subscription);
     });
     const envelope = await publisher.publish(activityRecordedV1, event(5), {
       correlationId: randomUUID(),

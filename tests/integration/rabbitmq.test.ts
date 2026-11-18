@@ -27,10 +27,7 @@ const queues: string[] = [];
 
 afterAll(async () => {
   const channel = await (await connector.connection()).createChannel();
-  for (const queue of queues) {
-    await channel.deleteQueue(queue);
-    await channel.deleteQueue(`${queue}.dlq`);
-  }
+  for (const queue of queues) await channel.deleteQueue(queue);
   await channel.close();
   await connector.close();
 });
@@ -79,7 +76,7 @@ describe('event messaging', () => {
       logger,
       handler: async (event) => deliver(event),
     });
-    queues.push(subscription.queue);
+    queues.push(subscription.queue, subscription.deadLetterQueue, ...subscription.retryQueues);
 
     const correlationId = randomUUID();
     const tenantId = randomUUID();
@@ -133,7 +130,7 @@ describe('event messaging', () => {
         handlerCalls += 1;
       },
     });
-    queues.push(subscription.queue);
+    queues.push(subscription.queue, subscription.deadLetterQueue, ...subscription.retryQueues);
 
     const channel = await (await connector.connection()).createConfirmChannel();
     channel.publish(
@@ -146,7 +143,7 @@ describe('event messaging', () => {
     let deadLettered = 0;
     for (let attempt = 0; attempt < 50 && deadLettered === 0; attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 100));
-      deadLettered = (await channel.checkQueue(`${subscription.queue}.dlq`)).messageCount;
+      deadLettered = (await channel.checkQueue(subscription.deadLetterQueue)).messageCount;
     }
     await channel.close();
     await subscription.cancel();

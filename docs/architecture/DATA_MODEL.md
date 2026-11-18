@@ -124,7 +124,7 @@ Constraints are enforced in the database as well as in the API contract
 **Row-level security (ADR-034).** Each owning schema has a `tenant_context` table (unlogged; one row
 per backend, keyed on the transaction id) that no service role may read or write. The service kit's
 `inScope()` declares the context with `<schema>.begin_tenant_context('all' | 'tenant', tenant_ids)`
-(`SECURITY DEFINER`), at most once per transaction. Every tenant-owned table's policy reads it through
+(`SECURITY DEFINER`), at most once per transaction. The policy of each table listed below reads it through
 `<schema>.tenant_context_all()` / `tenant_context_ids()`, evaluated once per statement. With no
 context declared in the current transaction, no tenant rows are visible. Session settings
 (`set_config`, `SET`) have no effect. Service roles do not own tables, so policies always apply to
@@ -138,8 +138,17 @@ them; the migrator owns them and is not subject to RLS.
 | `audit.audit_record`                | `tenant_id` | read; platform rows only platform-wide; insert only `all` |
 | `identity.role` (not tenant-scoped) | `is_system` | service role may write custom roles only                  |
 
-Tables without tenant data (`identity.user_account`, the assignment of platform roles, outboxes, the
-IdP cursor) are not tenant-scoped: access to them is decided by the service's authorisation.
+Tables without RLS are not tenant-scoped in the database: access to them is decided by the service's
+authorisation alone. Two kinds:
+
+- **No tenant data:** `identity.platform_role_assignment`, `identity.permission`,
+  `identity.idp_event_cursor`, the `tenant_context` tables and migration history.
+- **Tenant-attributable data, not protected by RLS (known gap, remediation before Stage 1B):**
+  `issuer.outbox` and `identity.outbox` hold every issuer's event envelopes (tenant id, actor,
+  resource, before/after values of allow-listed fields, invited email addresses) until 7 days after
+  publishing; `identity.user_account` holds every issuer's users (it has no tenant column — membership
+  is in `tenant_role_assignment`). A query mistake or injection in an issuer-scoped request could read
+  them across issuers. See SECURITY_MODEL.md, "Tenant isolation" and "Known limitations".
 
 **Seeds** (`pnpm db:seed`, synthetic only): Northstar Bank (active), Meridian Financial (active) and
 Harbourline Credit Union (onboarding) with configurations; 13 users on the reserved `.test` domain

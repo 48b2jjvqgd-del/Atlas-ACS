@@ -5,6 +5,7 @@ export * from './errors.js';
 export * from './app.js';
 export * from './runtime.js';
 export * from './messaging.js';
+export * from './messaging-migration.js';
 export * from './http-client.js';
 export * from './connectors/postgres.js';
 export * from './connectors/valkey.js';

@@ -155,10 +155,19 @@ while every other environment runs with both enforced.
 2. Platform administrators act across tenants only through explicit, audited platform endpoints.
 3. Every tenant-owned table has `tenant_id NOT NULL`; data access goes through repository functions that
    require a tenant context argument — there is no unscoped query helper.
-4. PostgreSQL row-level security on tenant-owned tables (`issuer.tenant`, `issuer.tenant_configuration`,
-   `identity.tenant_role_assignment`, `audit.audit_record`). The context is declared by `inScope()` with
-   `<schema>.begin_tenant_context()` and held by the database (ADR-034, DATA_MODEL.md). With no context
-   declared in the current transaction, no tenant rows are visible.
+4. PostgreSQL row-level security for tenant isolation on exactly **four** tables: `issuer.tenant`,
+   `issuer.tenant_configuration`, `identity.tenant_role_assignment` and `audit.audit_record`. The
+   context is declared by `inScope()` with `<schema>.begin_tenant_context()` and held by the database
+   (ADR-034, DATA_MODEL.md). With no context declared in the current transaction, no rows of those
+   tables are visible. (`identity.role` also has RLS, but only to keep system roles read-only; it is
+   not a tenant boundary.)
+   **Tables that hold tenant-attributable data without RLS:** `issuer.outbox` and `identity.outbox`
+   (every tenant's audit and domain event envelopes — tenant id, actor, action, resource, before/after
+   values of allow-listed fields, invited email addresses — kept for 7 days after publishing by
+   `OutboxRelay`), and `identity.user_account` (every user of every issuer: email, display name,
+   status; it has no tenant column — membership is in `tenant_role_assignment`). Any statement run
+   with the owning service's role sees all of their rows, whatever context is declared. See the threat
+   table below and "Known limitations"; the remediation is required before Stage 1B.
 5. Valkey keys and event envelopes (`tenantid`) carry the tenant.
 6. Automated cross-tenant tests for every tenant-scoped endpoint: a principal of tenant A must receive
    `404` (not `403`, to avoid disclosing existence) for tenant B's resources.
@@ -168,14 +177,16 @@ policies read the custom settings `atlas.scope` / `atlas.tenant_ids`. Any role c
 `set_config()`, so the guarantee was only against a query that _forgot_ its tenant predicate; a single
 injected expression could widen a tenant-scoped transaction to every tenant. Now:
 
-| Threat                                                                                       | Protected? | How / why not                                                                                                                                                      |
-| -------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A query in tenant-scoped code that forgets its tenant predicate                              | Yes        | Policies filter every row                                                                                                                                          |
-| SQL injection inside a tenant-scoped request (one statement)                                 | Yes        | `set_config`/`SET` have no effect; the context cannot be re-declared in the transaction; the context table is not readable or writable by the service role         |
-| Context leaking to the next request on a pooled connection (session or transaction pooling)  | Yes        | Keyed on backend and transaction id, which is never reused                                                                                                         |
-| One service reading or writing another service's schema or context                           | Yes        | No `USAGE` on other schemas; functions revoked from `PUBLIC`                                                                                                       |
-| SQL injection inside a request already running platform-wide (platform administrator, relay) | No         | That transaction legitimately sees every tenant                                                                                                                    |
-| A compromised service process using its own database credentials                             | **No**     | It can open its own transaction and declare platform-wide scope, as the service does for platform administrators. Only the application's authorisation stands here |
+| Threat                                                                                                | Protected? | How / why not                                                                                                                                                                                                                                                                   |
+| ----------------------------------------------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A query in tenant-scoped code that forgets its tenant predicate — on the four RLS tables              | Yes        | Policies filter every row                                                                                                                                                                                                                                                       |
+| The same, on `issuer.outbox`, `identity.outbox` or `identity.user_account`                            | **No**     | These tables have no RLS: only the query's own predicate limits what it returns                                                                                                                                                                                                 |
+| SQL injection inside a tenant-scoped request (one statement) — reading or writing the four RLS tables | Yes        | `set_config`/`SET` have no effect; the context cannot be re-declared in the transaction; the context table is not readable or writable by the service role                                                                                                                      |
+| SQL injection inside a tenant-scoped request — reading the outboxes or `identity.user_account`        | **No**     | No RLS: an injected sub-select in an issuer-scoped request could read other issuers' event envelopes (issuer-service, identity-service) or every user account (identity-service). No injection is known — every query is parameterised — but RLS gives no defence in depth here |
+| Context leaking to the next request on a pooled connection (session or transaction pooling)           | Yes        | Keyed on backend and transaction id, which is never reused                                                                                                                                                                                                                      |
+| One service reading or writing another service's schema or context                                    | Yes        | No `USAGE` on other schemas; functions revoked from `PUBLIC`                                                                                                                                                                                                                    |
+| SQL injection inside a request already running platform-wide (platform administrator, relay)          | No         | That transaction legitimately sees every tenant                                                                                                                                                                                                                                 |
+| A compromised service process using its own database credentials                                      | **No**     | It can open its own transaction and declare platform-wide scope, as the service does for platform administrators. Only the application's authorisation stands here                                                                                                              |
 
 Two further rows complete the picture:
 
@@ -203,7 +214,8 @@ are identical in structure and are exercised with each service's own credentials
 ### The remaining boundary, precisely
 
 **What the database prevents.** For every statement executed by a service role: seeing or changing a
-tenant row outside the declared context; widening, replacing or removing the context once declared in
+row of the four RLS tables outside the declared context (not rows of the outboxes or
+`identity.user_account`, which have no RLS — see point 4 above); widening, replacing or removing the context once declared in
 a transaction; carrying a context into another transaction or connection; using another service's
 schema, tables or context function; reading or writing the context table; disabling RLS or triggers
 (the service role owns nothing). Independently of the context, and even against the service's own
@@ -216,7 +228,12 @@ verified principal — a token verified against the IdP, the principal resolved 
 after the route's deny-by-default access policy has checked the permission and, for tenant routes,
 that the path tenant is one of the principal's issuers (otherwise `404`, audited). `tenantScope()` and
 `scopeFor()` only ever receive tenant ids that passed that check. `systemScope` (platform-wide) is used
-only by service-internal work and by endpoints whose policy requires a platform-wide permission.
+by service-internal work, by endpoints whose policy requires a platform-wide permission, and by two
+user endpoints whose policy requires only an active user: `GET /v1/identity/roles` (reads
+`identity.role`, which holds no tenant data) and `POST /v1/identity/users/:userId/status`, which reads
+the target's memberships platform-wide and then authorises in the handler (platform user management
+for platform users; `issuer.users.manage` in _every_ issuer of an issuer user) before it changes
+anything.
 
 **What a compromised service process could still do.** Code running with a service's database
 credentials (remote code execution in the service, a malicious dependency, a leaked password) can open
@@ -226,6 +243,11 @@ permission-scope rules), or read every audit record and append records with vali
 (audit-service). It cannot reach another service's schema, and the context-independent rules above
 still hold. Containing a compromised process is the job of the controls around it (separate
 credentials per service, no shared roles, monitoring), not of RLS.
+
+The database is not the only thing a service's credentials reach. A compromised **identity-service**
+also holds Keycloak `realm-management` rights (`manage-users`, `view-users`, `view-events`) and is the
+system of record for role assignments, so it amounts to control of the platform — see "Known
+limitations". Every service also holds the shared Valkey and RabbitMQ credentials (same section).
 
 **Why platform-wide scope remains necessary.** Several legitimate operations are not tied to one
 tenant: the audit consumer appends events for every issuer (its insert policy requires `all`);
@@ -274,8 +296,16 @@ cannot know which tenants they belong to.
   Triggers reject UPDATE, DELETE and TRUNCATE for every role. Anchoring chain heads externally is planned.
 - Authentication decisions reference the exact configuration versions used (see DATA_MODEL.md).
 - Delivery uses a transactional outbox (PostgreSQL services) or a durable Valkey outbox (gateway), so
-  a change cannot commit without its audit event and a broker outage delays but never loses events.
-  Delivery is at-least-once (a relay that stops between the broker's confirm and its commit publishes
+  a change cannot commit without its audit event, and on the **producer side** a broker outage delays
+  but does not lose events (the row stays in the outbox until the broker confirms it). On the
+  **broker side** every queue is a quorum queue and every move between queues (retry, return from a
+  delay queue, dead-lettering) is confirmed by the target before the source releases the message
+  (at-least-once dead-lettering, ADR-038), so a broker restart does not lose events in the main, delay
+  or dead-letter queues; the dead-letter queue has no delivery limit, so inspecting a dead letter cannot
+  delete it (`broker-restart.test.ts`, `messaging-migration.test.ts`; final review F-01, fixed;
+  [MESSAGING.md](../architecture/MESSAGING.md)). One gap remains: a gateway crash followed by a
+  container _recreate_ can strand the one event it was relaying in
+  `outbox:processing:<old hostname>` (final review F-03, open). Delivery is at-least-once (a relay that stops between the broker's confirm and its commit publishes
   again) and **ordering is best effort, not guaranteed** (ADR-037): one relay publishes the rows it can
   see in insertion order and a broker outage of any length does not reorder them, but overlapping
   transactions can be relayed in a different order from the one they started in, several relay
@@ -311,22 +341,26 @@ cannot know which tenants they belong to.
 
 ## Future requirements
 
-| Area                                        | Requirement                                                                                                                                                                                                                   | Stage                    |
-| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| **HSM integration**                         | Authentication-value generation and signing keys held in an HSM; a provider interface (PKCS#11 or vendor API) with a software implementation for simulation only; no key material in application memory longer than necessary | 7                        |
-| **Key management**                          | Key hierarchy, generation, rotation, revocation and destruction procedures; dual control and split knowledge where required; key inventory                                                                                    | 7                        |
-| **Certificate lifecycle**                   | Inventory of DS, TLS and signing certificates; automated renewal; expiry monitoring and alerting; revocation handling                                                                                                         | 7                        |
-| **Mutual TLS**                              | Between services (above) and with scheme directory servers per scheme requirements [research]                                                                                                                                 | 7                        |
-| **PCI DSS / PCI 3DS assessment**            | Scoping, segmentation, gap assessment, remediation and formal assessment by a QSA before any production use                                                                                                                   | 7                        |
-| **Data retention**                          | Retention period per data class and table, aligned with scheme rules, regulation and issuer contracts; automated deletion/partition drop; legal hold                                                                          | 5                        |
-| **GDPR / UK GDPR**                          | Records of processing, lawful basis (issuer as controller, ATLAS operator as processor — to be confirmed), DPIA, data-subject rights tooling, international transfer assessment, breach procedures                            | 5–7                      |
-| **Secrets management**                      | Integration with an enterprise secret store via `*_FILE` or a provider; rotation without restart                                                                                                                              | 7                        |
-| **Security testing**                        | SAST, dependency and container scanning in CI; threat modelling per stage; external penetration test                                                                                                                          | 1A+ (incremental), 7     |
-| **Session security**                        | Implemented in 1A (see above). Remaining: device/session listing and per-session revocation in the portal                                                                                                                     | 5                        |
-| **Tenant context vs. compromised services** | Database-enforced tenant scope that a service's own credentials cannot widen (ADR-034 options: split platform-wide and tenant-scoped deployables and roles, or a database-verified signed context)                            | before production        |
-| **Per-service broker credentials**          | One RabbitMQ user per service with validated `user-id`; audit-service rejects events whose producer does not match the authenticated publisher                                                                                | before production        |
-| **Audit anchoring**                         | Periodic export of chain heads to an external, append-only store (WORM storage or a timestamping service), checked by verification                                                                                            | 5–7                      |
-| **Non-synthetic data**                      | Only via a new ADR and migration with production data controls (ADR-033); never by configuration                                                                                                                              | after PCI/GDPR readiness |
+| Area                                        | Requirement                                                                                                                                                                                                                                                                                                                                        | Stage                                                                   |
+| ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| **HSM integration**                         | Authentication-value generation and signing keys held in an HSM; a provider interface (PKCS#11 or vendor API) with a software implementation for simulation only; no key material in application memory longer than necessary                                                                                                                      | 7                                                                       |
+| **Key management**                          | Key hierarchy, generation, rotation, revocation and destruction procedures; dual control and split knowledge where required; key inventory                                                                                                                                                                                                         | 7                                                                       |
+| **Certificate lifecycle**                   | Inventory of DS, TLS and signing certificates; automated renewal; expiry monitoring and alerting; revocation handling                                                                                                                                                                                                                              | 7                                                                       |
+| **Mutual TLS**                              | Between services (above) and with scheme directory servers per scheme requirements [research]                                                                                                                                                                                                                                                      | 7                                                                       |
+| **PCI DSS / PCI 3DS assessment**            | Scoping, segmentation, gap assessment, remediation and formal assessment by a QSA before any production use                                                                                                                                                                                                                                        | 7                                                                       |
+| **Data retention**                          | Retention period per data class and table, aligned with scheme rules, regulation and issuer contracts; automated deletion/partition drop; legal hold                                                                                                                                                                                               | 5                                                                       |
+| **GDPR / UK GDPR**                          | Records of processing, lawful basis (issuer as controller, ATLAS operator as processor — to be confirmed), DPIA, data-subject rights tooling, international transfer assessment, breach procedures                                                                                                                                                 | 5–7                                                                     |
+| **Secrets management**                      | Integration with an enterprise secret store via `*_FILE` or a provider; rotation without restart                                                                                                                                                                                                                                                   | 7                                                                       |
+| **Security testing**                        | SAST, dependency and container scanning in CI; threat modelling per stage; external penetration test                                                                                                                                                                                                                                               | 1A+ (incremental), 7                                                    |
+| **Session security**                        | Implemented in 1A (see above). Remaining: device/session listing and per-session revocation in the portal                                                                                                                                                                                                                                          | 5                                                                       |
+| **Tenant context vs. compromised services** | Database-enforced tenant scope that a service's own credentials cannot widen (ADR-034 options: split platform-wide and tenant-scoped deployables and roles, or a database-verified signed context)                                                                                                                                                 | before production                                                       |
+| **Per-service broker credentials**          | One RabbitMQ user per service with validated `user-id`; audit-service rejects events whose producer does not match the authenticated publisher                                                                                                                                                                                                     | before production                                                       |
+| **RLS gaps: outboxes and user accounts**    | Tenant-attributable rows in `issuer.outbox`, `identity.outbox` and `identity.user_account` protected in the database (RLS keyed on the event's/membership's tenant, or published payloads purged promptly and the user directory reached only through tenant-scoped functions); a catalogue test that every table holding tenant data has a policy | **before Stage 1B**                                                     |
+| **Durable consumer retries**                | Delayed retries that survive a broker restart (at-least-once dead-lettering into a target that is available, or another retry mechanism); `broker-restart.test.ts` must pass in CI                                                                                                                                                                 | **before merge** (implemented, ADR-038; passes locally; CI run pending) |
+| **Per-service Valkey credentials**          | One Valkey ACL user per service that needs Valkey, limited to its own key prefix and commands (gateway: sessions, login state, rate limits, outbox); no Valkey credential for services that do not use it                                                                                                                                          | before production                                                       |
+| **Identity-provider administration**        | Narrow identity-service's Keycloak rights to the operations it performs (fine-grained admin permissions or a separate, minimal provisioning component); separate privileged identity operations (password/OTP reset, role assignment to platform roles) from the request-serving process; alert on IdP admin events                                | before production                                                       |
+| **Audit anchoring**                         | Periodic export of chain heads to an external, append-only store (WORM storage or a timestamping service), checked by verification                                                                                                                                                                                                                 | 5–7                                                                     |
+| **Non-synthetic data**                      | Only via a new ADR and migration with production data controls (ADR-033); never by configuration                                                                                                                                                                                                                                                   | after PCI/GDPR readiness                                                |
 
 ## How to read the controls
 
@@ -334,7 +368,8 @@ cannot know which tenants they belong to.
   tests that exercise it. These are the primary controls: authentication at the IdP and gateway,
   authorisation in each service, the gateway's forwarding rules.
 - **Defence in depth** — controls that hold even if a primary control has a bug: row-level security
-  (against query mistakes and injection within a request), database-enforced permission scopes and
+  (against query mistakes and injection within a request, on the four RLS tables only — not the
+  outboxes or `identity.user_account`), database-enforced permission scopes and
   read-only system roles, synthetic-only constraints, append-only audit privileges and triggers, the
   audit hash chain, deny-by-default route policies, `amr`-based MFA in every service as well as the
   gateway. Their exact reach is stated where they are described; RLS in particular does not contain a
@@ -346,6 +381,40 @@ cannot know which tenants they belong to.
 
 - **Row-level security does not contain a compromised service.** See "Tenant isolation": a process
   holding a service's database credentials can declare platform-wide scope for its own transactions.
+- **Row-level security covers four tables, not every table with tenant data.** `issuer.outbox`,
+  `identity.outbox` (event envelopes of every issuer, kept 7 days after publishing) and
+  `identity.user_account` (every user of every issuer) have no RLS. A query mistake or SQL injection in
+  an issuer-scoped request of issuer-service or identity-service could read them across issuers.
+  No such defect is known (all queries are parameterised). Remediation is required **before Stage
+  1B**, which adds authentication transaction data that will flow through these outboxes.
+- **Messaging: single broker node, duplicates, recovery latency.** (F-01, the loss of consumer
+  retries on a broker restart, is fixed: ADR-038.) The local broker is one node, so a lost volume
+  loses queued events; production needs a three-node cluster. Delivery is at least once: duplicates
+  are expected and absorbed by idempotent consumers. A message that expires from a delay queue while
+  the broker is recovering can take up to the broker's 3-minute dead-letter confirm timeout to arrive.
+  Rolling back to the version-1 queue topology reintroduces the at-most-once loss window. See
+  [MESSAGING.md](../architecture/MESSAGING.md#limitations).
+- **One Valkey credential for all services.** Compose gives every service the same `VALKEY_URL`
+  (database 0, one password), including services that do not use Valkey. Any compromised service can
+  therefore: delete, reorder or inject entries in the gateway's audit outbox (`outbox`,
+  `outbox:processing:*`, `outbox:set-aside`; plain JSON), so gateway audit events (sign-in, sign-out,
+  session expiry, CSRF and access denials) can be suppressed or forged as long as they claim a
+  registered producer; delete portal sessions and pending sign-in state (forced sign-out for
+  everyone); and reset or inflate rate-limit counters. Session records are AES-256-GCM encrypted and
+  authenticated with a key only the gateway holds, so a session cannot simply be read or forged — but
+  that does not remove the availability and audit-integrity risks. Per-service Valkey ACL users with
+  least-privilege key and command patterns are a production requirement.
+- **identity-service can administer every identity-provider account.** Its Keycloak service account
+  holds `realm-management` roles `manage-users`, `view-users` and `view-events` (required today for
+  invitations, enabling/disabling accounts, requiring TOTP enrolment, ending sessions and ingesting
+  failed sign-ins). `manage-users` also allows resetting any user's password, removing their second
+  factor, changing required actions and ending sessions. Combined with identity-service's write access
+  to role assignments, a compromise of identity-service (code execution, a malicious dependency, its
+  client secret) could take over any account, including a Platform Super Admin, and grant itself
+  platform roles: effectively a platform takeover. This sits outside the database boundary described
+  under "Tenant isolation". Narrower Keycloak rights and separating privileged identity operations are
+  production requirements; changing the roles now affects invitation, disable and MFA-promotion flows
+  and is not part of Stage 1A.
 - **One RabbitMQ account for all services.** Any service (or anyone with the broker credentials) can
   publish an `activity-recorded` event claiming any producer; audit-service trusts the envelope's
   `source`. Per-service broker users with validated `user-id` are a production requirement.
@@ -389,7 +458,11 @@ production-only audit (which may never contain a high or critical advisory). Mis
 malformed evidence — audit output, advisories, severities, findings, paths, or the exception register
 itself — fails the gate. The exception expires at **00:00 UTC on its review date** and is not accepted on
 that date; the gate also fails once a patched version is published or once the exception no longer
-matches anything. Moderate advisories do not fail the gate (unchanged). `pnpm audit:deps` runs the same gate locally;
+matches anything. "No fix exists" must be stated by the audit output itself: pnpm 12 reports it as
+`patched_versions: null` together with `patched_versions_unpublished: true` (verified against the raw
+`pnpm audit --json` output for GHSA-fc5q-39xc-vjpf, and documented in the pnpm changelog); anything
+else — a missing field, a bare `null`, npm's older `"<0.0.0"`, another type, an empty or
+contradictory value, or a patched range — fails the gate (final review F-07). Moderate advisories do not fail the gate (unchanged). `pnpm audit:deps` runs the same gate locally;
 `pnpm audit:deps:raw` runs the plain `pnpm audit`, which still reports the excepted advisory.
 
 ### Temporary high-severity exceptions

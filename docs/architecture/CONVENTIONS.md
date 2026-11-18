@@ -123,16 +123,16 @@ Common keys: `ATLAS_ENV`, `HOST`, `PORT`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_T
 
 Implemented in [`messaging.ts`](../../packages/service-kit/src/messaging.ts).
 
-| Element      | Convention                                                                                                                       |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Envelope     | CloudEvents 1.0 structured JSON (`application/cloudevents+json`) with `correlationid` and optional `tenantid` extensions         |
-| Exchange     | `atlas.events`, durable topic exchange; routing key = event type                                                                 |
-| Queues       | `<consumer-service>.<purpose>`, durable **quorum** queues, each owned by one consumer                                            |
-| Dead letters | `atlas.events.dlx` → `<queue>.dlq`                                                                                               |
-| Publishing   | Confirm channels, persistent messages; payload validated before send; only the contract's registered producer may publish        |
-| Consuming    | Envelope and payload validated; invalid or failing messages are dead-lettered — never dropped silently, never requeued in a loop |
-| Delivery     | At-least-once. Consumers must be idempotent, keyed on the event `id`                                                             |
-| Ordering     | **Not guaranteed** (ADR-037). Consumers must be order-independent; an order-sensitive consumer needs a per-aggregate version     |
+| Element      | Convention                                                                                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Envelope     | CloudEvents 1.0 structured JSON (`application/cloudevents+json`) with `correlationid` and optional `tenantid` extensions                                                |
+| Exchange     | `atlas.events`, durable topic exchange; routing key = event type                                                                                                        |
+| Queues       | `<consumer-service>.<purpose>.v2`, durable **quorum** queues, each owned by one consumer; delay queues `<queue>.retry.<n>` (quorum)                                     |
+| Dead letters | `atlas.events.dlx` → `<queue>.dlq`, **at least once** (`x-dead-letter-strategy: at-least-once` + `x-overflow: reject-publish`); details in [MESSAGING.md](MESSAGING.md) |
+| Publishing   | Confirm channels, persistent messages; payload validated before send; only the contract's registered producer may publish                                               |
+| Consuming    | Envelope and payload validated; invalid or failing messages are dead-lettered — never dropped silently, never requeued in a loop                                        |
+| Delivery     | At-least-once. Consumers must be idempotent, keyed on the event `id`                                                                                                    |
+| Ordering     | **Not guaranteed** (ADR-037). Consumers must be order-independent; an order-sensitive consumer needs a per-aggregate version                                            |
 
 Retry with back-off, consumer resubscription after reconnect, and the transactional outbox (to publish
 atomically with a database write) are implemented (Stage 1A). The outbox relays the rows it can see in
