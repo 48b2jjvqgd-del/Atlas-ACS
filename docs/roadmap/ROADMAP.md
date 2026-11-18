@@ -121,19 +121,63 @@ Stage 1B, and does not resolve or accept these findings.
 
 1. **F-02: PostgreSQL tenant isolation.**
    - **Required outcome:** no issuer can reach another issuer's tenant-attributable data through
-     application queries, outbox records, user-directory access or other database access paths,
-     with the protection enforced in the database. All tenant-attributable data is protected,
-     including the exposure in `issuer.outbox`, `identity.outbox` and `identity.user_account`.
+     application queries, outbox records, user-directory access or other database access paths, with
+     the protection enforced in the database. All tenant-attributable data is protected, including the
+     exposure in `issuer.outbox`, `identity.outbox` and `identity.user_account`.
+   - **Threat scope: in scope.** Cross-tenant access through the platform's normal database paths:
+     - request-handling queries, including incorrect or missing tenant filters;
+     - database functions;
+     - background jobs;
+     - outbox writing, relaying, retry and retention;
+     - user-directory access;
+     - any other path that could expose one issuer's tenant-attributable data to another issuer.
+
+     Work that legitimately needs cross-tenant access (for example the outbox relay, the audit
+     consumer and platform administration) must declare that scope explicitly. Tests must show that
+     tenant-scoped paths cannot obtain it.
+
+   - **Threat scope: separately tracked, not part of F-02.** A fully compromised service process or
+     service identity: code that runs its own transactions with the service's credentials, declares
+     or manipulates its own database tenant context, or misuses those credentials. The current
+     database-held tenant context cannot prevent this. It validates only the form of a declaration,
+     not the end user's entitlement (ADR-034, "Limits, stated plainly"; SECURITY_MODEL "The remaining
+     boundary, precisely"). It is tracked as a production-hardening item ("A tenant context that a
+     compromised service cannot widen"). This exclusion is **not** an acceptance of cross-tenant access
+     through normal application paths, and it does not narrow the required outcome above.
    - **Implementation decision (open):** the F-02 design and implementation work selects the
-     mechanism. Options include tenant-isolation RLS, tenant-scoped database functions for the user
-     directory, and data minimisation or prompt purging of published outbox payloads, or a
-     combination (SECURITY_MODEL "Future requirements"). Whatever is chosen must meet the outcome
-     for every row, including outbox rows not yet published, and needs owner approval.
-   - Automated tests proving tenant isolation for the selected mechanism on those tables.
-   - A catalogue test that every table holding tenant data has a policy (SECURITY_MODEL
-     "Row-level security coverage by table").
-   - No claim of universal RLS coverage, or of complete tenant isolation, until this is
-     independently reviewed.
+     mechanism, and the choice needs owner approval. The options are:
+     - tenant-isolation RLS;
+     - tenant-scoped database functions for the user directory;
+     - data minimisation;
+     - prompt purging of published outbox payloads;
+     - a combination of these.
+
+     Whatever is chosen must meet the outcome for every row. **Unpublished outbox rows are covered**:
+     rows pending publication, rows awaiting retry, and rows set aside after repeated failure must be
+     protected for their whole lifetime. Purging published payloads reduces retention only; **on its own
+     it is not sufficient protection**.
+
+   - **Tenant-isolation control catalogue.** SECURITY_MODEL "Row-level security coverage by table" is
+     extended into a catalogue. It lists every table in the tenant-context schemas, whether the table
+     holds tenant-attributable data and, for each such table:
+     - the database-enforced control applied, for example:
+       - an RLS policy keyed on the tenant;
+       - no direct privilege for the service role, with access only through tenant-scoped functions;
+       - minimisation, so that the table holds no tenant-attributable content;
+     - the tests that prove the control.
+   - **Automated catalogue test**, run against the migrated database. It fails if:
+     - any table in those schemas is missing from the catalogue, including tables added later;
+     - a table catalogued as holding tenant-attributable data has no control recorded;
+     - the recorded control is not present in the database (for example RLS not enabled or no
+       policy, or the service role still holding direct privileges on a function-only table).
+   - **Automated cross-tenant tests** for every catalogued table and every in-scope path. Using the
+     service's own database role in a tenant-A context:
+     - reading tenant-B rows returns nothing, and writing, changing or deleting them fails;
+     - for the outboxes, this covers rows in every state (pending, retrying, set aside, and published
+       but retained);
+     - for minimised tables, a test asserts that no tenant-attributable content is stored.
+   - No claim of universal RLS coverage, or of complete tenant isolation, until this is independently
+     reviewed.
 2. **F-04: Valkey service isolation.**
    - An individual Valkey identity (ACL user) for each service that needs Valkey.
    - Least-privilege ACLs: each service reaches only the key prefixes and commands it requires.
