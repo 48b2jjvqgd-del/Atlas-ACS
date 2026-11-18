@@ -7,7 +7,11 @@ Decision log in lightweight ADR form.
   (2026-11-08).
 - **Accepted (general approval)** — approved by the owner as general architectural decisions at the
   Stage 0 final review (2026-11-08); documentation and rationale retained.
-- **Proposed** — awaiting the owner's decision. _None outstanding._
+- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-038 are proposed with Stage 1A
+  (024–032 with the Stage 1A delivery, 033–037 from the Stage 1A security remediation, 038 from the
+  final independent review, F-01) and are implemented on the Stage 1A branch for review. None has
+  been accepted yet. Several record residual risks that are accepted only once the owner accepts the
+  ADR.
 
 | ADR | Decision                                                                     | Status                             |
 | --- | ---------------------------------------------------------------------------- | ---------------------------------- |
@@ -34,6 +38,21 @@ Decision log in lightweight ADR form.
 | 021 | Documentation file locations                                                 | Accepted                           |
 | 022 | Final stage structure (1A, 1B, 2–7)                                          | Accepted (owner's final structure) |
 | 023 | GitHub Codespaces development configuration                                  | Accepted                           |
+| 024 | Backend-for-frontend sessions at the gateway                                 | Proposed (Stage 1A)                |
+| 025 | Database roles provisioned outside migrations; grants from the catalogue     | Proposed (Stage 1A)                |
+| 026 | identity-service is the system of record for authorisation                   | Proposed (Stage 1A)                |
+| 027 | Service tokens per callee audience; user token forwarded and re-verified     | Proposed (Stage 1A)                |
+| 028 | One audit event, outbox delivery, hash-chained append-only store             | Proposed (Stage 1A)                |
+| 029 | Jaeger as the local trace backend                                            | Proposed (Stage 1A)                |
+| 030 | A second factor is required for platform-wide permissions                    | Proposed (Stage 1A)                |
+| 031 | Event contracts may have several producers                                   | Proposed (Stage 1A)                |
+| 032 | Cross-tenant access returns 404 and is audited on the platform chain         | Proposed (Stage 1A)                |
+| 033 | Stage 1A stores synthetic records only, enforced by the database             | Proposed (Stage 1A)                |
+| 034 | Row-level-security context held by the database, set once per transaction    | Proposed (Stage 1A)                |
+| 035 | The database enforces permission scopes and protects system roles            | Proposed (Stage 1A)                |
+| 036 | Privilege ceiling and no self-change for platform administration             | Proposed (Stage 1A)                |
+| 037 | Event ordering is best effort; consumers idempotent and order-independent    | Proposed (Stage 1A)                |
+| 038 | Quorum delay queues and at-least-once dead-lettering; versioned topology     | Proposed (Stage 1A)                |
 
 ---
 
@@ -265,3 +284,291 @@ uses `restart: unless-stopped`: infrastructure (PostgreSQL, Valkey, RabbitMQ, Ke
 Prometheus, Grafana), the portal and all services. So the stack comes back on its own after a
 Codespace or Docker restart. Containers you stop deliberately (`docker compose stop`, `pnpm stack:down`)
 stay stopped. The one-off `migrate` job keeps `restart: 'no'`. No other infrastructure was changed.
+
+---
+
+## Stage 1A decisions (proposed, implemented for review)
+
+### ADR-024 Backend-for-frontend sessions at the gateway — _Proposed_
+
+**Decision.** api-gateway is a confidential OIDC client (authorisation code + PKCE) and keeps the
+tokens server-side in Valkey, encrypted with AES-256-GCM. The browser holds one opaque HttpOnly
+`__Host-` cookie. CSRF: session-bound header token plus Origin check.
+
+**Why.** No token in browser storage (roadmap acceptance criterion), refresh tokens never exposed to
+scripts, and one place to enforce idle/absolute expiry. **Alternatives:** a public SPA client with
+tokens in memory (exposes tokens to XSS, refresh handling in the browser); a separate BFF service
+(another hop with no benefit at this scale). **Consequence:** the gateway depends on Valkey; it fails
+closed (503) when Valkey is unavailable.
+
+### ADR-025 Database roles provisioned outside migrations; grants from the catalogue — _Proposed_
+
+**Decision.** Implements the ADR-012 gate. Roles and passwords are created by a separate provisioning
+step with an administrative connection (`pnpm db:provision`); migrations run as `atlas_migrator`, which
+then applies grants computed from the service catalogue. Migration SQL never names roles.
+
+**Why.** Passwords never appear in migration files or history; the same migrations work under a
+company DBA's role scheme; grants cannot drift from ownership. **Alternative:** roles in migrations
+(couples schema history to credentials and cluster-wide objects).
+
+### ADR-026 identity-service is the system of record for authorisation — _Proposed_
+
+**Decision.** The IdP authenticates; identity-service stores users, roles, permissions and issuer
+memberships and resolves a principal per request (cached ≤ 10 s in each service). Role or group claims
+in tokens are not used. Users are provisioned at the IdP by identity-service through the Keycloak Admin
+API, with an emailed invitation; ATLAS never handles passwords. System roles and the permission catalogue are
+synchronised into the database by the migration tool, not by the running service (ADR-035).
+
+**Why.** Tenant memberships and fine-grained permissions belong to ATLAS, change often and must be
+audited; keeping them out of tokens means changes apply within seconds rather than at token renewal, and
+the IdP stays replaceable (company IdP in Stage 7). **Cost:** one cached lookup per request.
+
+### ADR-027 Service tokens per callee audience; user token forwarded and re-verified — _Proposed_
+
+**Decision.** Each calling service obtains a client-credentials token per callee (scope `aud-<callee>`);
+Keycloak only grants audiences configured for the caller. Callees verify audience, issuer, expiry and
+caller per route. For user requests the gateway also forwards the user's access token
+(`x-atlas-user-token`), which each service verifies itself.
+
+**Why.** A stolen token is only good for one callee; the call graph is enforced twice; a compromised
+gateway cannot invent users. **Alternative:** gateway-asserted identity headers (trusted subsystem) —
+rejected as weaker. mTLS is the Stage 7 transport layer (SECURITY_MODEL.md).
+
+### ADR-028 One audit event, outbox delivery, hash-chained append-only store — _Proposed_
+
+**Decision.** All producers emit `atlas.platform.activity-recorded.v1`. PostgreSQL producers write it in
+the same transaction as the change (transactional outbox); the gateway uses a durable Valkey list.
+audit-service stores it idempotently (event id as key) in a per-tenant SHA-256 hash chain, append-only
+at the privilege, trigger and API levels. Before/after values are recorded for allow-listed
+non-sensitive fields only.
+
+**Why.** "A change cannot commit without its audit event" (roadmap 1A-8) and no loss during broker
+outages. **Change from Stage 0:** the earlier example contract `configuration-changed.v1` carried field
+names only; the owner asked for before/after information, so values are now recorded for allow-listed
+fields, and the contract rejects credential-like field names. `configuration-changed.v1` remains as an
+unused example contract.
+
+**Review note (final review; not a decision change).** The roadmap's 1A-8 wording names
+`configuration-changed` events; this ADR substitutes `activity-recorded.v1` (final review F-10). This
+substitution needs the owner's explicit acceptance. The hash chain proves the integrity of what is
+stored, not who produced it. audit-service accepts an event when its envelope `source` is a
+registered producer, but `source` is not authenticated while every service shares one RabbitMQ
+account (ADR-031) and one Valkey credential (the gateway's outbox). Producer authenticity is
+therefore a Stage 1B entry condition, not a property of Stage 1A.
+
+### ADR-029 Jaeger as the local trace backend — _Proposed_
+
+**Decision.** `jaegertracing/jaeger:2.22.0` (Apache-2.0) receives OTLP directly; Grafana gets a Jaeger
+datasource. **Why:** permissive licence, single container, query API used by an automated trace test.
+**Alternative:** Grafana Tempo (AGPL-3.0, more moving parts). Services only speak OTLP, so the backend
+is replaceable.
+
+### ADR-030 A second factor is required for platform-wide permissions — _Proposed_
+
+**Decision.** Platform users must enrol TOTP (required at invitation; pre-enrolled for local demo
+accounts). The IdP reports the methods used in `amr` (configured AMR references `pwd`/`otp`); the
+gateway and every service ignore platform-wide permissions when `amr` lacks a second factor.
+Issuer users may enrol optionally.
+
+**Amended (security remediation).** Granting platform roles to an existing account (an issuer user
+promoted, or an invitation that matches an existing account) now also requires TOTP enrolment at the
+identity provider when the account has no second factor, and ends the account's provider sessions, so
+the next sign-in goes through enrolment. Until then the account holds no platform permission (the
+`amr` rule above), so the promotion fails closed.
+
+**Amended (final review L-5; owner decision).** The second-factor rule is mandatory in every
+environment and has no kill switch. The former `PLATFORM_MFA_REQUIRED` setting, and the interim
+guard that allowed it to be `false` when `ATLAS_ENV` was `development` or `test`, are removed:
+`compose.yaml` defaults `ATLAS_ENV` to `development`, so a deployment that forgot to set it could
+otherwise have run with MFA disabled. No environment variable, configuration value or service option
+disables the rule; `applyMfaPolicy` (service-kit) takes no switch, and a stale
+`PLATFORM_MFA_REQUIRED` in the environment is ignored. Development and test use TOTP-enrolled
+accounts or test tokens whose `amr` includes `otp`. The `amr` rule itself is unchanged in the
+gateway and every service.
+
+### ADR-031 Event contracts may have several producers — _Proposed_
+
+**Decision.** `defineEvent` accepts `producers` (still accepts a single `producer`); publishers must be
+listed. Needed because several services emit audit activity. Additive change to `@atlas/contracts`.
+
+**Review note (final review; not a decision change).** The producer list is checked against the
+envelope's self-declared `source`. While all services share one RabbitMQ account, any service, or
+anyone holding the broker credentials, can publish an event that names any listed producer. Per-service
+broker users with validated `user-id`, and audit-service checking the authenticated publisher, are
+a Stage 1B entry condition (SECURITY_MODEL.md, "Known limitations").
+
+### ADR-032 Cross-tenant access returns 404 and is audited on the platform chain — _Proposed_
+
+**Decision.** A user with no access to an issuer gets 404 for any of its resources (403 only inside an
+issuer they belong to). The denial is recorded on the platform audit chain with the target issuer in
+metadata, not in the target issuer's own trail.
+
+**Why.** Existence is not disclosed, and one issuer's auditors never see another issuer's users.
+
+## Stage 1A security remediation decisions (proposed, for review)
+
+### ADR-033 Stage 1A stores synthetic records only, enforced by the database — _Proposed_
+
+**Decision.** Every issuer and every user is synthetic in Stage 1A, whatever `ATLAS_ENV` says. Services
+always write `is_synthetic = true`; `CHECK` constraints (`tenant_stage_1a_synthetic_only`,
+`user_account_stage_1a_synthetic_only`) refuse anything else for every role, including the migrator;
+user email addresses and issuer support contacts must use reserved domains (RFC 2606 / 6761:
+`*.test`, `*.example`, `*.invalid`, `*.localhost`, `example.com/.net/.org`), checked by the contracts and
+by constraints that use the same pattern text (`syntheticEmailDomainPattern`).
+
+**Why.** Previously `is_synthetic` followed `ATLAS_ENV`, so a deployment labelled staging or
+production would silently have created "real" records with no production controls in place.
+**Alternative rejected:** an environment variable or flag that permits real records — one
+misconfiguration away from real personal data in a system that is not ready for it.
+
+**How real records will be introduced (future, not Stage 1A).** Only through a reviewed change that
+(1) is recorded as a new ADR naming the stage and the environments concerned; (2) ships a migration
+that replaces these constraints with a rule tied to a controlled data-classification attribute, rather
+than dropping them, together with the controls real data needs — retention and deletion, DPIA and
+records of processing, access review, encryption at rest, backup handling and breach procedures
+(SECURITY_MODEL.md, "Future requirements"); (3) introduces an explicit, audited operator action for
+creating a non-synthetic issuer or user (never a default); and (4) keeps synthetic and real data
+separable for reporting and deletion. The synthetic constraints stay in every database used for
+development, test and simulation.
+
+### ADR-034 Row-level-security context held by the database, set once per transaction — _Proposed_
+
+**Decision.** `inScope()` declares the tenant context with `<schema>.begin_tenant_context(scope,
+tenant_ids)`, a `SECURITY DEFINER` function that records it in `<schema>.tenant_context`, keyed on the
+backend and the transaction id, and refuses a second declaration in the same transaction. Policies read
+the context through `SECURITY DEFINER` accessors. The service role has no privilege on the table, and the
+session settings `atlas.scope` / `atlas.tenant_ids` are no longer read by anything.
+
+**Why.** Any role can change a custom setting with `set_config()`, so the previous design could be
+widened by one injected expression inside a tenant-scoped query: it guarded only against forgetting a
+tenant predicate. The new context cannot be changed by the statements running inside it and cannot
+outlive its transaction on a pooled connection.
+
+**Limits, stated plainly.** Code holding the service's database credentials and able to run its own
+transactions (a compromised service process) can still declare platform-wide scope, because the service
+legitimately does so for platform administrators, principal resolution and the audit consumer, and it
+can declare any tenant list, because the function validates only the form of a declaration (scope value,
+no nulls, no list with `all`) — the database does not know the end user, so it cannot know which
+tenants they may act for. RLS is therefore a defence against query mistakes and injection within a
+request — on the four tables that have policies (`issuer.tenant`, `issuer.tenant_configuration`,
+`identity.tenant_role_assignment`, `audit.audit_record`), not on the outboxes or
+`identity.user_account`, which hold tenant-attributable data without RLS (final review F-02;
+remediation before Stage 1B) — and **not** against a compromised service process. Closing that needs the database to verify a
+credential the service cannot mint, which is not achievable in Stage 1A without changing the
+architecture. The precise boundary (what the database prevents, what the application prevents, what a
+compromised process can still do) is in SECURITY_MODEL.md, "Tenant isolation", and each property is
+asserted by `database-security.test.ts`, including the residual risk itself. **Options for production
+(not chosen yet):** separate deployables (and database roles) for platform-wide and tenant-scoped work,
+so a tenant-facing process has no role that can declare `all` (tenant lists stay unchecked); or a
+context signed by a component the service does not control (e.g. the gateway) and verified in the
+database, which also checks tenant lists; ideally both. **Costs accepted:** every scoped transaction is assigned a transaction id (more xid
+consumption, a write to an unlogged table); the context table is not replicated to standbys, so read
+replicas would need a different mechanism.
+
+### ADR-035 The database enforces permission scopes and protects system roles — _Proposed_
+
+**Decision.** `@atlas/contracts` remains the only definition of permissions, scopes and system roles.
+The migration tool copies it into `identity.permission` and the system roles after every run
+(`database/src/catalogue.ts`, audited through the identity outbox). Triggers refuse any role permission
+that is unknown, duplicated or not allowed at the role's scope, and any catalogue change that would
+leave a role in that state; row-level security on `identity.role` makes system roles read-only for the
+service role. identity-service no longer writes system roles at start-up; it verifies that the database
+matches the catalogue it was built with and is not ready otherwise.
+
+**Why.** The documentation claimed a database constraint that did not exist; a direct write with the
+identity-service credentials could have placed platform-only permissions in an issuer role.
+**Alternative rejected:** a hand-maintained SQL list of permissions — a second catalogue that would
+drift from the contracts.
+
+### ADR-036 Privilege ceiling and no self-change for platform administration — _Proposed_
+
+**Decision.** A caller may grant or remove platform roles, change the status of a platform user, or
+create or change a role only within the permissions they hold platform-wide themselves; nobody may
+change a role they hold; "inviting" one's own email address is treated as changing one's own roles and
+refused. Refusals are audited (`access.denied`, reason `privilege-ceiling` or `self-change`).
+
+**Why.** Without it, any holder of `platform.users.manage` (for example a narrow custom role) could
+make a second account Platform Super Admin, and any holder of `platform.roles.manage` could add
+permissions to a role they hold. Platform Super Admins are unaffected. **Not applied to issuer roles:**
+issuer user managers assign any issuer role within their issuer by design (ADR-026); they still cannot
+change their own roles.
+
+**Open (final review F-08; pending the owner's decision).** The issuer-role exception above lets a
+narrow issuer user manager create a second `issuer-administrator`. Nothing protects an issuer's
+last active `issuer-administrator`. The final review makes an issuer-role privilege ceiling and last-issuer-administrator
+protection a Stage 1B entry condition. That would revise this ADR's issuer-role exception, so the
+ADR should not be accepted unchanged.
+
+### ADR-037 Event ordering is best effort; consumers are idempotent and order-independent — _Proposed_
+
+**Decision.** ATLAS does not guarantee event order, within one producer or across producers. The
+transactional outbox guarantees no loss, at-least-once delivery, no double publish by concurrent relays
+(`FOR UPDATE SKIP LOCKED`) and that a poison row can neither block the outbox nor be dropped. As best
+effort, one relay publishes the rows it can see in insertion order (`relay_sequence`, replacing
+`created_at`) and keeps that order through a broker outage of any length. Every consumer must be
+idempotent (keyed on the event id) and must not depend on arrival order; a future consumer that applies
+state changes must compare a per-aggregate version carried in the event.
+
+**Why.** Investigation of the Stage 1A outbox showed that the documented "commit order" was not
+provided: `created_at` is the transaction's start time, so one transaction's events were unordered and
+overlapping transactions could be relayed out of commit order; several relay instances publish
+concurrently; consumers handle up to `prefetch` messages at once and retry failures after later ones;
+and the poison rule set rows aside during a long broker outage, reordering and delaying them. The only
+consumer in Stage 1A, audit-service, needs no order: records are deduplicated by event id and each chain
+is hashed in storage order under a per-chain lock, so any arrival order yields a valid chain
+(`outbox-ordering.test.ts`). **Changes made:** insertion-order relay; a row is set aside only once a row
+behind it has published (an outage is no longer mistaken for poison), in both the PostgreSQL relay and
+the gateway's Valkey outbox; unreadable gateway entries are kept, not deleted; a relay that loses its
+database connection no longer crashes the process. **Alternative rejected:** strict ordering through a
+single active relay per outbox (advisory lock) plus commit-ordered sequencing — it would serialise
+publishing and allow one poison row to stall everything behind it, and would still be undone by
+concurrent consumers and retry queues; no consumer needs it. If a later stage needs per-aggregate order
+(for example card status), the preferred design is an aggregate version checked by the consumer, not a
+global order.
+
+### ADR-038 Quorum delay queues and at-least-once dead-lettering; versioned queue topology — _Proposed_
+
+**Decision.** Every queue of a subscription is a durable quorum queue, and every queue that
+dead-letters does so at least once: main queue `<service>.<name>.v2` and delay queues
+`<service>.<name>.v2.retry.<n>` declare `x-dead-letter-strategy: at-least-once` with `x-overflow:
+reject-publish`; the main queue also declares `x-delivery-limit: 20`. The dead-letter queue
+`<service>.<name>.v2.dlq` declares `x-delivery-limit: -1`. Because RabbitMQ cannot change these
+arguments on an existing queue, the queues get new (`.v2`) names; version-2 consumers unbind and drain
+the version-1 queues automatically, and an operator tool retires them (refusing while they hold
+messages or have consumers) or rolls back. Delivery stays at least once; consumers stay idempotent.
+Details, migration and rollback: [MESSAGING.md](../architecture/MESSAGING.md).
+
+**Why.** Final review F-01: a real broker restart (`broker-restart.test.ts`) lost events waiting in
+the classic delay queues. On recovery the broker dead-lettered them to the main quorum queue at most
+once, before that queue had a leader ("leader not known. Command is dropped"). Verified against
+RabbitMQ 4.4.0: with at-least-once dead-lettering an expired message whose target is unavailable stays
+in its source queue and is delivered later; with the default strategy, **or with at-least-once but
+without `reject-publish`**, it is dropped. The main queue's path to the dead-letter queue had the same
+weakness. The investigation found a second loss path: the version-1 dead-letter queue inherited RabbitMQ
+4's default quorum delivery limit (20) with no dead-letter target, so a dead letter inspected and
+returned 20 times was deleted; poison messages were therefore not reliably recoverable. Redeclaring
+existing queues with the new arguments is refused (`406 inequivalent arg`), and `queue.delete` with
+`if-empty` is not supported for quorum queues (it closes the connection), which shaped the retirement
+design (consumer-count precondition instead).
+
+**Alternatives rejected.** _Broker policies_ (`dead-letter-strategy`, `overflow` applied by policy to
+existing queues): avoids renaming, but the guarantee would live in broker configuration outside the
+code and outside the tests of each environment, and a missing policy silently restores at-most-once.
+_Consumer-side moves only_ (the consumer publishes every dead letter and every retry return itself):
+cannot cover TTL expiry or the delivery limit, which only the broker performs. _A delayed-message
+plugin_: not a quorum queue, keeps delayed messages in a non-replicated store. _Deleting and
+re-creating the queues_: loses whatever they hold.
+
+**Consequences.** Recovery of messages that expire during broker recovery may take up to the broker's
+dead-letter confirm timeout (3 min). Duplicates remain possible and are absorbed by idempotent
+consumers. A rollback reintroduces at-most-once dead-lettering until version 2 is redeployed. The local
+broker is a single node; replication (three nodes) is a production requirement (Stage 7).
+
+**Final verification (review of this ADR's implementation).** Three further loss paths were closed:
+internal publishes straight to a queue (retries, dead-letter copies, moves, replays) are `mandatory`,
+because the default exchange confirms and drops a message for a deleted queue; version-2 consumers
+re-unbind the version-1 queue on every poll and retirement unbinds it before checking, so a binding
+re-created by a version-1 instance cannot outlive it; rollback refuses while version-2 consumers run,
+declares the version-1 dead-letter queue, and finishes only after a final empty pass. Replay keeps the
+failure history in `x-atlas-death-history`, because RabbitMQ 4 restarts `x-death` when a replayed
+message dies again.

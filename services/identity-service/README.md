@@ -1,6 +1,8 @@
 # Identity Service (`identity-service`)
 
-> **Stage 0 status:** skeleton only — infrastructure endpoints, no domain logic.
+> **Stage 1A status:** implemented — users, roles (system and custom), permissions and issuer
+> memberships; principal resolution for other services; Keycloak user provisioning and invitations;
+> failed sign-in ingestion; escalation guards. Routes: `packages/contracts/src/http/v1/identity.ts`.
 
 ## Responsibilities
 

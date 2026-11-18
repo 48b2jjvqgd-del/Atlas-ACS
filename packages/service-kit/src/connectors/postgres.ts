@@ -1,5 +1,6 @@
 import type { Logger } from '@atlas/observability';
 import pg from 'pg';
+import { bindTenantContext } from '../data/scope.js';
 
 /**
  * PostgreSQL connector.
@@ -19,6 +20,8 @@ export function createPostgresConnector(options: {
   applicationName: string;
   logger: Logger;
   maxConnections?: number;
+  /** Schema owning the service's row-level-security context function (see data/scope.ts). */
+  tenantContextSchema?: string;
 }): PostgresConnector {
   const pool = new pg.Pool({
     connectionString: options.url,
@@ -28,6 +31,7 @@ export function createPostgresConnector(options: {
     connectionTimeoutMillis: 2_000,
     statement_timeout: 10_000,
   });
+  if (options.tenantContextSchema) bindTenantContext(pool, options.tenantContextSchema);
   // Idle-client errors (e.g. database restart) must not crash the process.
   pool.on('error', (error) => options.logger.warn({ error }, 'PostgreSQL idle client error'));
 

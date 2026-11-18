@@ -33,7 +33,12 @@ export default tseslint.config(
     },
   },
   {
-    files: ['scripts/**', 'database/src/cli/**', '**/*.config.{js,ts,mjs}'],
+    files: [
+      'scripts/**',
+      'database/src/cli/**',
+      'packages/service-kit/src/cli/**',
+      '**/*.config.{js,ts,mjs}',
+    ],
     rules: { 'no-console': 'off' },
   },
   {

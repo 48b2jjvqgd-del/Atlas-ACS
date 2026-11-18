@@ -31,7 +31,7 @@ backed by a working local simulation environment rather than a static demonstrat
 | Decisioning            | Issuer-configurable risk rules; frictionless / challenge / decline outcomes             |
 | Authentication methods | OTP, out-of-band, biometrics and others via pluggable providers                         |
 | Compliance             | SCA exemption handling, scheme rule enforcement, compliance evidence                    |
-| Administration         | One portal for platform administrators and issuer users; permission-driven              |
+| Administration         | One portal for platform administrators and issuer users; permission-driven (Stage 1A)   |
 | Oversight              | Reporting projections and a tamper-evident audit trail                                  |
 | Simulation             | Local 3DS Server and Directory Server simulation for end-to-end testing                 |
 
@@ -39,8 +39,10 @@ See [ROADMAP.md](roadmap/ROADMAP.md) for when each capability is planned.
 
 ## Development approach
 
-- **Staged delivery.** Each stage is reviewed before the next begins. Stage 0 (this foundation) is
-  deliberately free of business logic.
+- **Staged delivery.** Each stage is reviewed before the next begins. Stage 0 laid the foundation;
+  Stage 1A makes the portal a working, secure, multi-tenant issuer administration platform (sign-in,
+  roles and permissions, issuer registry and configuration, user management, audit trail); the ACS
+  protocol engine follows in Stage 1B.
 - **Microservices from the start**, each owning its own data, sharing only versioned contracts.
 - **Contracts first.** Inter-service APIs and events are defined in `@atlas/contracts`, validated at
   runtime and exportable as JSON Schema.
@@ -79,7 +81,8 @@ ATLAS is **not** production software. In particular:
 - It has no HSM integration; no real cryptographic keys or certificates are used.
 - Local infrastructure uses development-grade configuration (single instances, generated local
   passwords, no TLS between services).
-- Stage 0 has no authentication of portal users or of service-to-service calls.
+- Identity runs on a development-mode Keycloak with synthetic demo accounts; service-to-service
+  traffic is token-authenticated but not yet mutually TLS-authenticated (Stage 7).
 
 These limitations are tracked in the [security model](security/SECURITY_MODEL.md) and the
 [roadmap](roadmap/ROADMAP.md).

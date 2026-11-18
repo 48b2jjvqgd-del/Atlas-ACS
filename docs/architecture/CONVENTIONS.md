@@ -123,18 +123,25 @@ Common keys: `ATLAS_ENV`, `HOST`, `PORT`, `LOG_LEVEL`, `LOG_PRETTY`, `SHUTDOWN_T
 
 Implemented in [`messaging.ts`](../../packages/service-kit/src/messaging.ts).
 
-| Element      | Convention                                                                                                                       |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------- |
-| Envelope     | CloudEvents 1.0 structured JSON (`application/cloudevents+json`) with `correlationid` and optional `tenantid` extensions         |
-| Exchange     | `atlas.events`, durable topic exchange; routing key = event type                                                                 |
-| Queues       | `<consumer-service>.<purpose>`, durable **quorum** queues, each owned by one consumer                                            |
-| Dead letters | `atlas.events.dlx` → `<queue>.dlq`                                                                                               |
-| Publishing   | Confirm channels, persistent messages; payload validated before send; only the contract's registered producer may publish        |
-| Consuming    | Envelope and payload validated; invalid or failing messages are dead-lettered — never dropped silently, never requeued in a loop |
-| Delivery     | At-least-once. Consumers must be idempotent, keyed on the event `id`                                                             |
+| Element      | Convention                                                                                                                                                              |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Envelope     | CloudEvents 1.0 structured JSON (`application/cloudevents+json`) with `correlationid` and optional `tenantid` extensions                                                |
+| Exchange     | `atlas.events`, durable topic exchange; routing key = event type                                                                                                        |
+| Queues       | `<consumer-service>.<purpose>.v2`, durable **quorum** queues, each owned by one consumer; delay queues `<queue>.retry.<n>` (quorum)                                     |
+| Dead letters | `atlas.events.dlx` → `<queue>.dlq`, **at least once** (`x-dead-letter-strategy: at-least-once` + `x-overflow: reject-publish`); details in [MESSAGING.md](MESSAGING.md) |
+| Publishing   | Confirm channels, persistent messages; payload validated before send; only the contract's registered producer may publish                                               |
+| Consuming    | Envelope and payload validated; invalid or failing messages are dead-lettered — never dropped silently, never requeued in a loop                                        |
+| Delivery     | At-least-once. Consumers must be idempotent, keyed on the event `id`                                                                                                    |
+| Ordering     | **Not guaranteed** (ADR-037). Consumers must be order-independent; an order-sensitive consumer needs a per-aggregate version                                            |
 
-Retry with back-off, consumer resubscription after reconnect, and the transactional outbox pattern (to
-publish atomically with a database write) are planned for Stage 1A.
+Retry with back-off, consumer resubscription after reconnect, and the transactional outbox (to publish
+atomically with a database write) are implemented (Stage 1A). The outbox relays the rows it can see in
+insertion order, but nothing preserves order end to end: overlapping transactions commit in a different
+order from the one they started in, several relay instances publish concurrently, a poison row is
+overtaken by the rows behind it, a consumer handles up to `prefetch` messages concurrently, and a failed
+message is retried after later ones. A future consumer that applies state changes (for example card or
+issuer status) must carry and compare an aggregate version in the event, and discard stale updates,
+rather than rely on arrival order.
 
 ## Health and lifecycle
 

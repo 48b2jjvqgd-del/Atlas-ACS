@@ -6,7 +6,7 @@ import {
   type ReadinessResponse,
   type ServiceInfo,
 } from '@atlas/contracts';
-import { createServiceMetrics, type Logger } from '@atlas/observability';
+import { annotateActiveSpan, type Logger, type ServiceMetrics } from '@atlas/observability';
 import { correlationIdSchema } from '@atlas/schemas';
 import {
   apiHelmetOptions,
@@ -45,6 +45,7 @@ export interface BuildAppOptions {
   logger: Logger;
   metadata: ServiceMetadata;
   readiness: ReadinessRegistry;
+  metrics: ServiceMetrics;
 }
 
 /**
@@ -53,8 +54,7 @@ export interface BuildAppOptions {
  * standard error responses and the infrastructure endpoints.
  */
 export async function buildServiceApp(options: BuildAppOptions): Promise<FastifyInstance> {
-  const { config, logger, metadata, readiness } = options;
-  const metrics = createServiceMetrics(metadata.name);
+  const { config, logger, metadata, readiness, metrics } = options;
 
   const app = Fastify({
     loggerInstance: logger as FastifyBaseLogger,
@@ -71,7 +71,7 @@ export async function buildServiceApp(options: BuildAppOptions): Promise<Fastify
     requestTimeout: DEFAULT_REQUEST_TIMEOUT_MS,
     keepAliveTimeout: DEFAULT_KEEP_ALIVE_TIMEOUT_MS,
     return503OnClosing: true,
-    trustProxy: false,
+    trustProxy: config.TRUSTED_PROXY_ADDRESSES?.length ? config.TRUSTED_PROXY_ADDRESSES : false,
   });
 
   installZodCompilers(app);
@@ -83,6 +83,7 @@ export async function buildServiceApp(options: BuildAppOptions): Promise<Fastify
       (request.raw as RawWithCorrelation)[correlationSymbol] ?? resolveCorrelationId(undefined);
     reply.header(headers.correlationId, request.correlationId);
     reply.header(headers.requestId, request.id);
+    annotateActiveSpan({ 'atlas.correlation_id': request.correlationId });
   });
 
   app.addHook('onResponse', async (request, reply) => {

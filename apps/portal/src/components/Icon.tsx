@@ -1,6 +1,18 @@
 import type { IconName } from '../app/navigation';
 
-type ExtraIcon = 'menu' | 'close' | 'refresh' | 'shield' | 'arrow-right' | 'lock';
+type ExtraIcon =
+  | 'menu'
+  | 'close'
+  | 'refresh'
+  | 'shield'
+  | 'arrow-right'
+  | 'lock'
+  | 'logout'
+  | 'plus'
+  | 'search'
+  | 'check'
+  | 'chevron-down'
+  | 'key';
 
 const paths: Record<IconName | ExtraIcon, string> = {
   overview: 'M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z',
@@ -23,6 +35,14 @@ const paths: Record<IconName | ExtraIcon, string> = {
   shield: 'M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6z',
   'arrow-right': 'M5 12h14M13 6l6 6-6 6',
   lock: 'M6 11h12v9H6zM8 11V8a4 4 0 0 1 8 0v3',
+  roles: 'M12 3l7 3v5c0 4.5-3 8.3-7 10-4-1.7-7-5.5-7-10V6zM12 9v4M12 16h.01',
+  account: 'M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8M4 21v-1a6 6 0 0 1 6-6h4a6 6 0 0 1 6 6v1',
+  logout: 'M15 4h4v16h-4M10 8l-4 4 4 4M6 12h10',
+  plus: 'M12 5v14M5 12h14',
+  search: 'M11 18a7 7 0 1 0 0-14 7 7 0 0 0 0 14M20 20l-4-4',
+  check: 'M5 12l5 5 9-10',
+  'chevron-down': 'M6 9l6 6 6-6',
+  key: 'M14 10a4 4 0 1 0-4 4l-6 6v-3h3v-3h3M15 7h.01',
 };
 
 export function Icon({

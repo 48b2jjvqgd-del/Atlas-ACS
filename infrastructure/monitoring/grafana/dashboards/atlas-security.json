@@ -1,0 +1,214 @@
+{
+  "uid": "atlas-security",
+  "title": "ATLAS \u2014 Security, audit and messaging",
+  "tags": [
+    "atlas",
+    "stage-1a"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "description": "Stage 1A controls in operation. Live metrics only; no synthetic values.",
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Authentication failures at the edge (401/429)",
+      "description": "Unauthenticated and rate-limited requests at the gateway.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "atlas-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (status_code) (rate(atlas_http_request_duration_seconds_count{service=\"api-gateway\",status_code=~\"401|429\"}[5m]))",
+          "legendFormat": "HTTP {{status_code}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "atlas-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Access denied by services, by reason",
+      "description": "Denials after authentication: forbidden, tenant-not-accessible (cross-tenant), no-account, caller-not-allowed, csrf.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "atlas-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 0,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service, reason) (rate(atlas_access_denied_total[5m]))",
+          "legendFormat": "{{service}} \u00b7 {{reason}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "atlas-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Audit events relayed from outboxes",
+      "description": "Transactional (PostgreSQL) and Valkey outboxes. Sustained failures mean the broker is unavailable; events wait, they are not lost.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "atlas-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (service, outcome) (rate(atlas_outbox_relayed_total[5m]))",
+          "legendFormat": "{{service}} \u00b7 {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "atlas-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Events consumed, by outcome",
+      "description": "acked, retried (delayed redelivery) and dead-lettered.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "atlas-prometheus"
+      },
+      "gridPos": {
+        "x": 12,
+        "y": 8,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event_type, outcome) (rate(atlas_messages_consumed_total[5m]))",
+          "legendFormat": "{{event_type}} \u00b7 {{outcome}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "atlas-prometheus"
+          }
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Administrative API latency (p95)",
+      "description": "",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "atlas-prometheus"
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 24,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le, service) (rate(atlas_http_request_duration_seconds_bucket{service=~\"api-gateway|issuer-service|identity-service|audit-service\",route!~\"/health.*|/metrics\"}[5m])))",
+          "legendFormat": "{{service}}",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "atlas-prometheus"
+          }
+        }
+      ]
+    }
+  ]
+}
