@@ -1,25 +1,4 @@
 {
   "$comment": "Temporary, narrowly scoped dependency-audit exceptions enforced by scripts/audit-gate.mjs. Each entry must match the 'Accepted dependency advisories' register in docs/security/SECURITY_MODEL.md. An exception covers one advisory, one package and the listed versions, on development/build dependency paths only; it is accepted only on UTC dates before reviewBy (it expires at 00:00 UTC on reviewBy and is not accepted on that date), only while every finding and dependency path is present and in scope and its severity matches, and it stops applying (the audit fails) once a patched version is published or if the advisory reaches a production dependency.",
-  "exceptions": [
-    {
-      "ghsa": "GHSA-fc5q-39xc-vjpf",
-      "cve": "CVE-2026-112366",
-      "severity": "high",
-      "package": "picomatch",
-      "versions": ["4.0.7"],
-      "allowedPaths": [
-        "apps__portal>vite>",
-        "apps__portal>@vitejs/plugin-react>vite>",
-        "apps__portal>@tailwindcss/vite>vite>",
-        ".>vitest>",
-        ".>typescript-eslint>"
-      ],
-      "justification": "Reached only through development and build tooling (Vite for the portal build, Vitest, typescript-eslint); no production dependency path; not present in any runtime image. Glob patterns passed to it come from repository configuration, not from users. No patched release exists.",
-      "residualRisk": "A crafted glob pattern in repository configuration or a malicious dependency could cause a denial of service of a developer or CI build. No runtime exposure.",
-      "owner": "Project owner (Stage 1A approver)",
-      "approved": "2026-11-17",
-      "reviewBy": "2026-12-01",
-      "removeWhen": "An official patched picomatch release is available and verified; upgrade and delete this entry."
-    }
-  ]
+  "exceptions": []
 }

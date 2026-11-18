@@ -1,10 +1,38 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { evaluate } from './audit-gate.mjs';
+import { evaluate, validateExceptions } from './audit-gate.mjs';
 
-const { exceptions } = JSON.parse(
-  readFileSync(new URL('./audit-exceptions.json', import.meta.url), 'utf8'),
-);
+/**
+ * Historical fixture: the GHSA-fc5q-39xc-vjpf (picomatch) exception exactly as it was in
+ * scripts/audit-exceptions.json from 2026-11-17 until GitHub withdrew the advisory on 2026-11-18
+ * (SECURITY_MODEL.md, "Removed exceptions"). It exercises the gate's rules; it is independent of the
+ * live register, which is tested separately at the end of this file.
+ */
+const exceptions = [
+  {
+    ghsa: 'GHSA-fc5q-39xc-vjpf',
+    cve: 'CVE-2026-112366',
+    severity: 'high',
+    package: 'picomatch',
+    versions: ['4.0.7'],
+    allowedPaths: [
+      'apps__portal>vite>',
+      'apps__portal>@vitejs/plugin-react>vite>',
+      'apps__portal>@tailwindcss/vite>vite>',
+      '.>vitest>',
+      '.>typescript-eslint>',
+    ],
+    justification:
+      'Reached only through development and build tooling (Vite for the portal build, Vitest, typescript-eslint); no production dependency path; not present in any runtime image. Glob patterns passed to it come from repository configuration, not from users. No patched release exists.',
+    residualRisk:
+      'A crafted glob pattern in repository configuration or a malicious dependency could cause a denial of service of a developer or CI build. No runtime exposure.',
+    owner: 'Project owner (Stage 1A approver)',
+    approved: '2026-11-17',
+    reviewBy: '2026-12-01',
+    removeWhen:
+      'An official patched picomatch release is available and verified; upgrade and delete this entry.',
+  },
+];
 const today = '2026-11-17';
 
 const advisory = (overrides = {}) => ({
@@ -366,5 +394,46 @@ describe('dependency audit gate fails closed', () => {
     expect(failuresFor(advisory(), { exceptions: 'none' })).toEqual([
       expect.stringContaining('not a list'),
     ]);
+  });
+});
+
+describe('live exception register (scripts/audit-exceptions.json)', () => {
+  const liveText = readFileSync(new URL('./audit-exceptions.json', import.meta.url), 'utf8');
+  const live = JSON.parse(liveText);
+
+  it('is a valid register: every entry passes validateExceptions', () => {
+    expect(Array.isArray(live.exceptions)).toBe(true);
+    expect(validateExceptions(live.exceptions)).toEqual([]);
+  });
+
+  it('no longer contains the withdrawn advisory', () => {
+    expect(live.exceptions.map((e) => e.ghsa)).not.toContain('GHSA-fc5q-39xc-vjpf');
+    expect(liveText).not.toContain('GHSA-fc5q-39xc-vjpf');
+    expect(liveText).not.toContain('CVE-2026-112366');
+  });
+
+  it('accepts an empty register as "no exceptions", which still fails every high advisory', () => {
+    expect(validateExceptions([])).toEqual([]);
+    expect(evaluate({ full: empty, prod: empty, exceptions: [], today }).failures).toEqual([]);
+    const failures = evaluate({
+      full: report(advisory()),
+      prod: empty,
+      exceptions: [],
+      today,
+    }).failures;
+    expect(failures).toHaveLength(1);
+    expect(failures[0]).toContain('GHSA-fc5q-39xc-vjpf');
+  });
+
+  it('fails closed on a missing or malformed register', () => {
+    // A register file without an `exceptions` list (or with something else in its place).
+    for (const register of [undefined, null, {}, 'none', 42, { ghsa: 'GHSA-fc5q-39xc-vjpf' }]) {
+      expect(validateExceptions(register)).toEqual(['exception register is not a list']);
+      expect(
+        evaluate({ full: empty, prod: empty, exceptions: register, today }).failures,
+      ).toContainEqual(expect.stringContaining('exception register is not a list'));
+    }
+    expect(validateExceptions([null])).not.toEqual([]);
+    expect(validateExceptions([{}])).not.toEqual([]);
   });
 });
