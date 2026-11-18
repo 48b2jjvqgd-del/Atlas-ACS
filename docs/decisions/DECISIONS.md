@@ -7,9 +7,11 @@ Decision log in lightweight ADR form.
   (2026-11-08).
 - **Accepted (general approval)** — approved by the owner as general architectural decisions at the
   Stage 0 final review (2026-11-08); documentation and rationale retained.
-- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-037 are proposed with Stage 1A (033–037
-  from the Stage 1A security remediation) and are implemented on the Stage 1A branch for review.
-  Several record residual risks that are accepted only once the owner accepts the ADR.
+- **Proposed** — awaiting the owner's decision. ADR-024 to ADR-038 are proposed with Stage 1A
+  (024–032 with the Stage 1A delivery, 033–037 from the Stage 1A security remediation, 038 from the
+  final independent review, F-01) and are implemented on the Stage 1A branch for review. None has
+  been accepted yet. Several record residual risks that are accepted only once the owner accepts the
+  ADR.
 
 | ADR | Decision                                                                     | Status                             |
 | --- | ---------------------------------------------------------------------------- | ---------------------------------- |
@@ -50,6 +52,7 @@ Decision log in lightweight ADR form.
 | 035 | The database enforces permission scopes and protects system roles            | Proposed (Stage 1A)                |
 | 036 | Privilege ceiling and no self-change for platform administration             | Proposed (Stage 1A)                |
 | 037 | Event ordering is best effort; consumers idempotent and order-independent    | Proposed (Stage 1A)                |
+| 038 | Quorum delay queues and at-least-once dead-lettering; versioned topology     | Proposed (Stage 1A)                |
 
 ---
 
@@ -345,6 +348,14 @@ names only; the owner asked for before/after information, so values are now reco
 fields, and the contract rejects credential-like field names. `configuration-changed.v1` remains as an
 unused example contract.
 
+**Review note (final review; not a decision change).** The roadmap's 1A-8 wording names
+`configuration-changed` events; this ADR substitutes `activity-recorded.v1` (final review F-10). This
+substitution needs the owner's explicit acceptance. The hash chain proves the integrity of what is
+stored, not who produced it. audit-service accepts an event when its envelope `source` is a
+registered producer, but `source` is not authenticated while every service shares one RabbitMQ
+account (ADR-031) and one Valkey credential (the gateway's outbox). Producer authenticity is
+therefore a Stage 1B entry condition, not a property of Stage 1A.
+
 ### ADR-029 Jaeger as the local trace backend — _Proposed_
 
 **Decision.** `jaegertracing/jaeger:2.22.0` (Apache-2.0) receives OTLP directly; Grafana gets a Jaeger
@@ -356,8 +367,8 @@ is replaceable.
 
 **Decision.** Platform users must enrol TOTP (required at invitation; pre-enrolled for local demo
 accounts). The IdP reports the methods used in `amr` (configured AMR references `pwd`/`otp`); the
-gateway and every service ignore platform-wide permissions when `amr` lacks a second factor
-(`PLATFORM_MFA_REQUIRED`, default true). Issuer users may enrol optionally.
+gateway and every service ignore platform-wide permissions when `amr` lacks a second factor.
+Issuer users may enrol optionally.
 
 **Amended (security remediation).** Granting platform roles to an existing account (an issuer user
 promoted, or an invitation that matches an existing account) now also requires TOTP enrolment at the
@@ -365,10 +376,26 @@ identity provider when the account has no second factor, and ends the account's 
 the next sign-in goes through enrolment. Until then the account holds no platform permission (the
 `amr` rule above), so the promotion fails closed.
 
+**Amended (final review L-5; owner decision).** The second-factor rule is mandatory in every
+environment and has no kill switch. The former `PLATFORM_MFA_REQUIRED` setting, and the interim
+guard that allowed it to be `false` when `ATLAS_ENV` was `development` or `test`, are removed:
+`compose.yaml` defaults `ATLAS_ENV` to `development`, so a deployment that forgot to set it could
+otherwise have run with MFA disabled. No environment variable, configuration value or service option
+disables the rule; `applyMfaPolicy` (service-kit) takes no switch, and a stale
+`PLATFORM_MFA_REQUIRED` in the environment is ignored. Development and test use TOTP-enrolled
+accounts or test tokens whose `amr` includes `otp`. The `amr` rule itself is unchanged in the
+gateway and every service.
+
 ### ADR-031 Event contracts may have several producers — _Proposed_
 
 **Decision.** `defineEvent` accepts `producers` (still accepts a single `producer`); publishers must be
 listed. Needed because several services emit audit activity. Additive change to `@atlas/contracts`.
+
+**Review note (final review; not a decision change).** The producer list is checked against the
+envelope's self-declared `source`. While all services share one RabbitMQ account, any service, or
+anyone holding the broker credentials, can publish an event that names any listed producer. Per-service
+broker users with validated `user-id`, and audit-service checking the authenticated publisher, are
+a Stage 1B entry condition (SECURITY_MODEL.md, "Known limitations").
 
 ### ADR-032 Cross-tenant access returns 404 and is audited on the platform chain — _Proposed_
 
@@ -465,6 +492,12 @@ make a second account Platform Super Admin, and any holder of `platform.roles.ma
 permissions to a role they hold. Platform Super Admins are unaffected. **Not applied to issuer roles:**
 issuer user managers assign any issuer role within their issuer by design (ADR-026); they still cannot
 change their own roles.
+
+**Open (final review F-08; pending the owner's decision).** The issuer-role exception above lets a
+narrow issuer user manager create a second `issuer-administrator`. Nothing protects an issuer's
+last active `issuer-administrator`. The final review makes an issuer-role privilege ceiling and last-issuer-administrator
+protection a Stage 1B entry condition. That would revise this ADR's issuer-role exception, so the
+ADR should not be accepted unchanged.
 
 ### ADR-037 Event ordering is best effort; consumers are idempotent and order-independent — _Proposed_
 

@@ -95,10 +95,10 @@ const testService = defineService({
   },
 });
 
-async function start() {
+async function start(env: Record<string, string> = {}) {
   const service = await createService(
     testService,
-    { ATLAS_ENV: 'test', LOG_LEVEL: 'silent', PORT: '0', OIDC_ISSUER_URL: TEST_ISSUER },
+    { ATLAS_ENV: 'test', LOG_LEVEL: 'silent', PORT: '0', OIDC_ISSUER_URL: TEST_ISSUER, ...env },
     { overrides: { keySet: issuer.keySet, principals } },
   );
   running.push(service as unknown as RunningService<Record<never, never>>);
@@ -108,9 +108,9 @@ async function start() {
 async function call(
   method: 'GET' | 'POST' | 'PUT',
   url: string,
-  options: { service?: string | null; user?: string | null } = {},
+  options: { service?: string | null; user?: string | null; env?: Record<string, string> } = {},
 ) {
-  const service = await start();
+  const service = await start(options.env);
   const headers: Record<string, string> = {};
   const serviceToken =
     options.service === undefined
@@ -280,5 +280,31 @@ describe('user authentication and authorisation', () => {
     );
     const listed = await call('GET', '/v1/things', { user: withMfa });
     expect(listed.body.tenants).toBe('all');
+  });
+
+  it('requires the second factor in every environment, whatever the configuration says', async () => {
+    const withoutMfa = await issuer.userToken('platform-admin', { amr: ['pwd'] });
+    const withMfa = await issuer.userToken('platform-admin', { amr: ['pwd', 'otp'] });
+    for (const ATLAS_ENV of ['development', 'test', 'simulation', 'staging', 'production']) {
+      // The removed kill switch, and look-alikes, have no effect anywhere.
+      const env = {
+        ATLAS_ENV,
+        PLATFORM_MFA_REQUIRED: 'false',
+        MFA_REQUIRED: 'false',
+        PLATFORM_MFA: 'off',
+      };
+      for (const user of [withoutMfa, await issuer.userToken('platform-admin', { amr: [] })]) {
+        expect((await call('POST', '/v1/things', { user, env })).status, ATLAS_ENV).toBe(403);
+        const listed = await call('GET', '/v1/things', { user, env });
+        expect(listed.body.tenants, ATLAS_ENV).toEqual([]);
+        expect(
+          (await call('GET', `/v1/tenants/${TENANT_B}/thing`, { user, env })).status,
+          ATLAS_ENV,
+        ).toBe(404);
+      }
+      expect((await call('POST', '/v1/things', { user: withMfa, env })).status, ATLAS_ENV).toBe(
+        200,
+      );
+    }
   });
 });

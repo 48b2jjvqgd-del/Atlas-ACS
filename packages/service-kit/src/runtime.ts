@@ -202,7 +202,6 @@ export async function createService<TShape extends z.ZodRawShape>(
       service: definition.name,
       verifier: serviceSecurity.verifier,
       principals,
-      platformMfaRequired: config.PLATFORM_MFA_REQUIRED,
       onDenied: async (event) => {
         metrics.accessDenied.inc({ reason: event.reason });
         await recordDenied?.(event);

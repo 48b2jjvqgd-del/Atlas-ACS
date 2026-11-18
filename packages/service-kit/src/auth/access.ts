@@ -78,8 +78,6 @@ export interface AccessControlOptions {
   service: ServiceName;
   verifier: TokenVerifier;
   principals: PrincipalResolver;
-  /** Platform permissions require a second factor at sign-in (amr contains "otp"). Default true. */
-  platformMfaRequired: boolean;
   /** Called (awaited, errors swallowed) whenever access is denied after authentication. */
   onDenied?: (event: AccessDeniedEvent) => Promise<void>;
 }
@@ -87,13 +85,12 @@ export interface AccessControlOptions {
 const infrastructureRoute = /^\/(health|metrics|info)(\/|$)/;
 const MFA_METHODS = new Set(['otp', 'mfa', 'hwk', 'swk']);
 
-/** Removes platform-wide permissions when the sign-in did not use a second factor. */
-export function applyMfaPolicy(
-  principal: Principal,
-  amr: readonly string[],
-  required: boolean,
-): Principal {
-  if (!required || amr.some((method) => MFA_METHODS.has(method))) return principal;
+/**
+ * Removes platform-wide permissions when the sign-in did not use a second factor (ADR-030).
+ * Unconditional: there is no setting, environment or option that disables it.
+ */
+export function applyMfaPolicy(principal: Principal, amr: readonly string[]): Principal {
+  if (amr.some((method) => MFA_METHODS.has(method))) return principal;
   return { ...principal, platformPermissions: [], platformRoles: [] };
 }
 
@@ -165,7 +162,7 @@ export function installAccessControl(app: FastifyInstance, options: AccessContro
       );
       return;
     }
-    const principal = applyMfaPolicy(resolved, user.amr, options.platformMfaRequired);
+    const principal = applyMfaPolicy(resolved, user.amr);
     request.principal = principal;
     const authz = authorizer(principal);
     request.authz = authz;

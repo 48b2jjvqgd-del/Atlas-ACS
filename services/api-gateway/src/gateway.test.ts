@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { collectPlatformHealth } from './platform-health.js';
 import { resolveServiceUrls } from './registry.js';
 import { definition } from './service.js';
+import { SessionStore } from './sessions.js';
 
 const running: RunningService<never>[] = [];
 afterEach(async () => {
@@ -138,9 +139,38 @@ describe('authentication at the edge', () => {
     const response = await gateway.app.inject({
       method: 'GET',
       url: '/v1/session',
-      headers: { cookie: '__Host-atlas_session=abc' },
+      // A well-formed id, so the gateway must consult the (unreachable) session store.
+      headers: { cookie: `__Host-atlas_session=${SessionStore.newId()}` },
     });
     expect(response.statusCode).toBeGreaterThanOrEqual(500);
+  });
+
+  it('fails closed, without authenticating, when Valkey is down and a well-formed cookie is sent', async () => {
+    // Regression: the rate-limit identity lookup (sessions.isActive) must not turn an unavailable
+    // store into a crash or into access; it falls back to the address and the request fails closed.
+    const gateway = await startGateway();
+    const cookie = `theme=dark; __Host-atlas_session=${SessionStore.newId()}`;
+    const requests = [
+      { method: 'GET', url: '/v1/session' },
+      { method: 'GET', url: '/v1/tenants' },
+      { method: 'PUT', url: '/v1/tenants/00000000-0000-4000-8000-000000000001/configuration' },
+    ] as const;
+    for (const { method, url } of requests) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await gateway.app.inject({
+          method,
+          url,
+          headers: { cookie, 'content-type': 'application/json' },
+          ...(method === 'PUT' ? { payload: {} } : {}),
+        });
+        expect(response.statusCode, `${method} ${url}`).toBeGreaterThanOrEqual(500);
+        // A problem document only: no session data, no internal error detail.
+        problemDetailsSchema.parse(response.json());
+        expect(response.body).not.toMatch(/principal|csrfToken|ECONNREFUSED|stack/i);
+        // Not mistaken for a missing session: the browser keeps its cookie for when Valkey returns.
+        expect(String(response.headers['set-cookie'] ?? '')).not.toMatch(/atlas_session=;/);
+      }
+    }
   });
 
   it('refuses to start without its client secret or a valid session key', async () => {
@@ -148,6 +178,62 @@ describe('authentication at the edge', () => {
     await expect(startGateway({ SESSION_ENCRYPTION_KEY: 'short' })).rejects.toThrow(
       /SESSION_ENCRYPTION_KEY/,
     );
+  });
+});
+
+describe('malformed cookies (final review F-12)', () => {
+  // Each value is rejected by decodeURIComponent; before the fix any one of them in the Cookie
+  // header made every gateway route answer 500, because the global rate-limit key parsed cookies.
+  const malformed = ['%', '%E0%A4%A', '%zz', '%C0%AF'];
+
+  it('ignores a malformed unrelated cookie instead of failing the request', async () => {
+    const gateway = await startGateway();
+    for (const value of malformed) {
+      for (const url of ['/v1/session', '/v1/tenants', '/v1/unknown-route']) {
+        const response = await gateway.app.inject({
+          method: 'GET',
+          url,
+          headers: { cookie: `theme=${value}` },
+        });
+        expect(response.statusCode, `${url} with theme=${value}`).toBe(
+          url === '/v1/unknown-route' ? 404 : 401,
+        );
+      }
+    }
+  });
+
+  it('treats a malformed session cookie as no session, without consulting the store', async () => {
+    // Valkey is unreachable here: a lookup would fail with 5xx, so 401 proves none was attempted.
+    const gateway = await startGateway();
+    for (const value of [...malformed, 'abc', `${SessionStore.newId()}x`, '../../etc']) {
+      const response = await gateway.app.inject({
+        method: 'GET',
+        url: '/v1/session',
+        headers: { cookie: `__Host-atlas_session=${value}` },
+      });
+      expect(response.statusCode, value).toBe(401);
+      expect(problemDetailsSchema.parse(response.json()).code).toBe('UNAUTHENTICATED');
+      expect(String(response.headers['set-cookie'])).toMatch(/^__Host-atlas_session=; .*Max-Age=0/);
+    }
+  });
+
+  it('keeps sign-out and unauthenticated writes available with a malformed cookie', async () => {
+    const gateway = await startGateway();
+    const logout = await gateway.app.inject({
+      method: 'POST',
+      url: '/v1/auth/logout',
+      headers: { cookie: 'a=%; __Host-atlas_session=%E0%A4%A' },
+    });
+    expect(logout.statusCode).toBe(200);
+    expect(logout.json()).toMatchObject({ data: { endSessionUrl: null } });
+
+    const write = await gateway.app.inject({
+      method: 'PUT',
+      url: '/v1/tenants/00000000-0000-4000-8000-000000000001/configuration',
+      headers: { cookie: 'a=%', 'content-type': 'application/json' },
+      payload: {},
+    });
+    expect(write.statusCode).toBe(401);
   });
 });
 

@@ -31,6 +31,7 @@ import {
   cookieNames,
   parseCookies,
   serialiseCookie,
+  sessionCookieFrom,
   SessionStore,
   tokensMatch,
   type SessionRecord,
@@ -174,9 +175,25 @@ export const definition = defineService({
       maxAge: 600,
     });
 
-    const sessionKey = (request: FastifyRequest) => {
-      const id = parseCookies(request.headers.cookie)[cookies.session];
-      return id ? `s:${id.slice(0, 16)}` : `ip:${request.ip}`;
+    /**
+     * Rate-limit identity (final review L-2). A per-session bucket is used only for a session
+     * that exists, decrypts under this gateway's key and has not expired; its key is a keyed hash,
+     * never the id itself. Everything else — no cookie, a malformed or unknown id, an expired
+     * session, or Valkey being unavailable — shares the client address's bucket, so rotating
+     * arbitrary cookie values cannot mint fresh identities. Costs one Valkey read per request
+     * that presents a well-formed session cookie.
+     */
+    const sessionKey = async (request: FastifyRequest) => {
+      const cookie = sessionCookieFrom(request.headers.cookie, cookies.session);
+      if (cookie && 'id' in cookie) {
+        try {
+          if (await sessions.isActive(cookie.id))
+            return `s:${sessions.rateLimitIdentity(cookie.id)}`;
+        } catch {
+          // Valkey unavailable: fall back to the address; the request itself then fails closed.
+        }
+      }
+      return `ip:${request.ip}`;
     };
     // Registered after the infrastructure endpoints, so orchestrator probes are never limited.
     await app.register(rateLimit, {
@@ -241,8 +258,14 @@ export const definition = defineService({
 
     /** Loads, validates, refreshes and slides the caller's session; null when there is none. */
     const loadSession = async (request: FastifyRequest, reply: FastifyReply) => {
-      const id = parseCookies(request.headers.cookie)[cookies.session];
-      if (!id) return null;
+      const cookie = sessionCookieFrom(request.headers.cookie, cookies.session);
+      if (!cookie) return null;
+      if ('malformed' in cookie) {
+        // Never looked up: no stored session can have this id (F-12).
+        clearSessionCookie(reply);
+        return null;
+      }
+      const { id } = cookie;
       const loaded = await sessions.load(id);
       if (!loaded) {
         clearSessionCookie(reply);
@@ -313,7 +336,7 @@ export const definition = defineService({
         await sessions.destroy(request.session!.id);
         throw new AtlasError('UNAUTHENTICATED', { detail: 'Your ATLAS account is not active' });
       }
-      return applyMfaPolicy(principal, record.amr, config.PLATFORM_MFA_REQUIRED);
+      return applyMfaPolicy(principal, record.amr);
     };
 
     /** CSRF: state-changing requests must carry the session's token and a permitted Origin. */
@@ -469,8 +492,8 @@ export const definition = defineService({
           outcome: 'success',
           metadata: {
             mfa,
-            platformAccess:
-              principal.platformPermissions.length > 0 && (mfa || !config.PLATFORM_MFA_REQUIRED),
+            // What the session will actually be granted: the same rule every request applies.
+            platformAccess: applyMfaPolicy(principal, signedIn.amr).platformPermissions.length > 0,
           },
         });
         return reply.redirect(`${portal}${login.returnTo}`, 302);

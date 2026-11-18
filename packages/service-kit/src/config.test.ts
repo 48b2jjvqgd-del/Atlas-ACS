@@ -82,6 +82,21 @@ describe('loadServiceConfig', () => {
     ).toBe('FEATURE_LIMIT');
   });
 
+  describe('platform MFA has no configuration (ADR-030)', () => {
+    const load = (env: Record<string, string>) => loadServiceConfig('api-gateway', [], {}, env);
+
+    it('exposes no setting that could disable the second-factor rule, in any environment', () => {
+      for (const ATLAS_ENV of ['development', 'test', 'simulation', 'staging', 'production']) {
+        for (const value of ['false', '0', 'true']) {
+          // The former kill switch is no longer read: it neither fails nor reaches the config.
+          const config = load({ ATLAS_ENV, PLATFORM_MFA_REQUIRED: value });
+          const keys = Object.keys(config).filter((key) => /MFA/i.test(key));
+          expect(keys, `${ATLAS_ENV} ${value}`).toEqual([]);
+        }
+      }
+    });
+  });
+
   describe('secret files', () => {
     const directory = mkdtempSync(join(tmpdir(), 'atlas-config-'));
     afterAll(() => rmSync(directory, { recursive: true, force: true }));

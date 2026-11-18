@@ -91,8 +91,6 @@ export function baseConfigShape(defaultPort: number) {
     OIDC_ISSUER_URL: z.url().optional(),
     /** Back-channel base URL of the same issuer (e.g. inside Docker); defaults to OIDC_ISSUER_URL. */
     OIDC_INTERNAL_URL: z.url().optional(),
-    /** Platform-wide permissions require a second factor at sign-in. */
-    PLATFORM_MFA_REQUIRED: booleanStringSchema.default(true),
     SERVICE_CALL_TIMEOUT_MS: positiveIntSchema.default(3_000),
     /**
      * Reverse proxies (addresses or CIDRs) whose X-Forwarded-For is trusted, e.g. the portal's
