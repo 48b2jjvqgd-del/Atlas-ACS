@@ -499,6 +499,22 @@ last active `issuer-administrator`. The final review makes an issuer-role privil
 protection a Stage 1B entry condition. That would revise this ADR's issuer-role exception, so the
 ADR should not be accepted unchanged.
 
+**Required revision before acceptance (F-08; documentation only, nothing implemented).** This ADR
+stays _Proposed_. It must not be accepted in its current form. The revised decision must:
+
+1. Remove the issuer-role exception. Within an issuer, a holder of `issuer.users.manage` may assign
+   or remove only issuer roles, system or custom, whose permissions they hold in that issuer.
+   Custom roles are created and changed only by holders of `platform.roles.manage` (platform scope,
+   already under this ADR's ceiling), so inside an issuer the escalation path is role assignment.
+2. Protect each issuer's last active `issuer-administrator`: no removal of the role, no disabling
+   of the account, and no demotion that leaves the issuer without one. This mirrors the existing
+   protection for the last Platform Super Admin.
+3. Audit refusals with the existing `access.denied` reasons, or a new reason recorded in the ADR.
+4. Be backed by regression tests for escalation and for last-administrator protection.
+
+The revised ADR is a Stage 1B entry condition (ROADMAP "Stage 1B entry conditions", item 3) and
+needs the owner's decision before it is marked Accepted.
+
 ### ADR-037 Event ordering is best effort; consumers are idempotent and order-independent — _Proposed_
 
 **Decision.** ATLAS does not guarantee event order, within one producer or across producers. The

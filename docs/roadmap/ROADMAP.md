@@ -5,17 +5,17 @@ identifiers are referenced by the portal's placeholders, the compliance matrix a
 changing them requires updating those references. Final stage structure approved at the Stage 0 final
 review (ADR-022).
 
-| Stage | Name                                                                  | Status                                            |
-| ----- | --------------------------------------------------------------------- | ------------------------------------------------- |
-| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)            |
-| 1A    | Platform security and issuer foundations                              | **Final remediation — awaiting final acceptance** |
-| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                         |
-| 2     | Fraud and decision engine                                             | Planned                                           |
-| 3     | Challenge engine                                                      | Planned                                           |
-| 4     | Compliance engine                                                     | Planned                                           |
-| 5     | Reporting and analytics                                               | Planned                                           |
-| 6     | Demonstration and performance testing                                 | Planned                                           |
-| 7     | Migration, authorised scheme integration and certification            | Planned                                           |
+| Stage | Name                                                                  | Status                                                                                                    |
+| ----- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| 0     | Independent platform foundation                                       | **Approved** (final review 2026-11-08)                                                                    |
+| 1A    | Platform security and issuer foundations                              | **Complete**: merged to `main` (PR #7, `04f57b2`); four findings remain open as Stage 1B entry conditions |
+| 1B    | ACS protocol foundation and simulated Visa/Mastercard DS connectivity | Planned — **not started**                                                                                 |
+| 2     | Fraud and decision engine                                             | Planned                                                                                                   |
+| 3     | Challenge engine                                                      | Planned                                                                                                   |
+| 4     | Compliance engine                                                     | Planned                                                                                                   |
+| 5     | Reporting and analytics                                               | Planned                                                                                                   |
+| 6     | Demonstration and performance testing                                 | Planned                                                                                                   |
+| 7     | Migration, authorised scheme integration and certification            | Planned                                                                                                   |
 
 Each stage is independent and has its own acceptance criteria. In particular, fraud/decisioning (2) and
 challenge (3) are **not** part of Stage 1B.
@@ -31,6 +31,13 @@ _No business logic._
 
 Goal: no sensitive domain functionality is built until identity, isolation, least privilege and
 auditability are in place and tested. Includes issuer administration and RBAC.
+
+**Status: complete.** Stage 1A implementation and remediation are complete. PR #7 was merged into
+`main` with merge commit `04f57b26b5db934c7402a484195f87d7c364395e`; all six CI jobs had passed on
+its head (`e5a78d3`, run 44409816635). Merging did **not** resolve the outstanding findings:
+F-02, F-04, F-08 and the shared RabbitMQ credentials remain open and are mandatory Stage 1B entry
+conditions ("Stage 1B entry conditions" below). ADR-024 to ADR-038 remain _Proposed_. **Stage 1B
+has not started.**
 
 | #   | Deliverable                                                                                                                                                                                                                                                      | Acceptance evidence                                                                                            |
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
@@ -49,19 +56,19 @@ Also in 1A: a Valkey-backed rate-limit store at the gateway.
 
 ### Stage 1A delivery status
 
-| #   | Status                                                                                                                                                                                                                                                                                                                                              | Evidence                                                                                                                        |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Implemented: OIDC code + PKCE BFF, sessions, sign-out, TOTP for platform users                                                                                                                                                                                                                                                                      | `tests/system/authentication.test.ts`, browser journeys                                                                         |
-| 2   | Implemented: permission catalogue, deny-by-default route policies, permission-driven portal                                                                                                                                                                                                                                                         | `access.test.ts`, `permissions.test.ts`, `navigation.test.ts`, `shell.spec.ts`                                                  |
-| 3   | Implemented: issuer registry, lifecycle, versioned configuration, users; RLS on four tables. **Gap:** outboxes and `identity.user_account` hold tenant data without RLS (F-02, Stage 1B entry condition)                                                                                                                                            | `issuer-management.test.ts`, `database-security.test.ts`                                                                        |
-| 4   | Implemented: tenant context from verified principals; tampering tests                                                                                                                                                                                                                                                                               | `tenant-isolation.test.ts`                                                                                                      |
-| 5   | Implemented for every tenant-scoped endpoint (both directions)                                                                                                                                                                                                                                                                                      | `tenant-isolation.test.ts`                                                                                                      |
-| 6   | Implemented: migrator + per-service roles; append-only audit role                                                                                                                                                                                                                                                                                   | `database-security.test.ts`                                                                                                     |
-| 7   | Implemented: client-credentials per callee, caller allow-lists; mTLS design documented                                                                                                                                                                                                                                                              | `access.test.ts`, `service-security.test.ts`                                                                                    |
-| 8   | Implemented, **with a substitution**: configuration changes emit `atlas.platform.activity-recorded.v1` (action `issuer.configuration.updated`, before/after values of allow-listed settings), not `configuration-changed.v1` (field names only, unused example contract) — ADR-028. Via transactional/Valkey outbox; hash-chained append-only store | `database-security.test.ts`, `audit.test.ts`                                                                                    |
-| 9   | Implemented: resubscription, bounded publish retry, delayed retries, DLQ, unrouted-event retention, idempotent consumer; quorum delay queues and at-least-once dead-lettering (ADR-038). A real broker restart mid-flow loses nothing (10 of 10 consecutive local runs; passed in CI run 44400443275 on `a321ff8`)                                  | `messaging-resilience.test.ts` (forced connection loss), `broker-restart.test.ts` (real restart), `messaging-migration.test.ts` |
-| 10  | Implemented: OTLP to Jaeger; HTTP, fetch, PostgreSQL and RabbitMQ propagation                                                                                                                                                                                                                                                                       | `tracing.test.ts`                                                                                                               |
-| —   | Valkey-backed rate limiting with fallback                                                                                                                                                                                                                                                                                                           | `rate-limit-store.test.ts`, `rate-limit.test.ts`                                                                                |
+| #   | Status                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | Evidence                                                                                                                        |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | Implemented: OIDC code + PKCE BFF, sessions, sign-out, TOTP for platform users                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `tests/system/authentication.test.ts`, browser journeys                                                                         |
+| 2   | Implemented: permission catalogue, deny-by-default route policies, permission-driven portal                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `access.test.ts`, `permissions.test.ts`, `navigation.test.ts`, `shell.spec.ts`                                                  |
+| 3   | Implemented: issuer registry, lifecycle, versioned configuration, users. Tenant-isolation RLS on `issuer.tenant`, `issuer.tenant_configuration`, `identity.tenant_role_assignment` and `audit.audit_record`; `identity.role` has RLS only to keep system roles read-only (not a tenant boundary). **RLS does not yet cover all tenant-owned tables:** `issuer.outbox`, `identity.outbox` and `identity.user_account` hold tenant-attributable data without tenant-isolation RLS (F-02, open, Stage 1B entry condition; the existing policies do not resolve it) | `issuer-management.test.ts`, `database-security.test.ts`                                                                        |
+| 4   | Implemented: tenant context from verified principals; tampering tests                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | `tenant-isolation.test.ts`                                                                                                      |
+| 5   | Implemented for every tenant-scoped endpoint (both directions)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  | `tenant-isolation.test.ts`                                                                                                      |
+| 6   | Implemented: migrator + per-service roles; append-only audit role                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               | `database-security.test.ts`                                                                                                     |
+| 7   | Implemented: client-credentials per callee, caller allow-lists; mTLS design documented                                                                                                                                                                                                                                                                                                                                                                                                                                                                          | `access.test.ts`, `service-security.test.ts`                                                                                    |
+| 8   | Implemented, **with a substitution**: configuration changes emit `atlas.platform.activity-recorded.v1` (action `issuer.configuration.updated`, before/after values of allow-listed settings), not `configuration-changed.v1` (field names only, unused example contract) — ADR-028. Via transactional/Valkey outbox; hash-chained append-only store                                                                                                                                                                                                             | `database-security.test.ts`, `audit.test.ts`                                                                                    |
+| 9   | Implemented: resubscription, bounded publish retry, delayed retries, DLQ, unrouted-event retention, idempotent consumer; quorum delay queues and at-least-once dead-lettering (ADR-038). A real broker restart mid-flow loses nothing (10 of 10 consecutive local runs; passed in CI run 44400443275 on `a321ff8`)                                                                                                                                                                                                                                              | `messaging-resilience.test.ts` (forced connection loss), `broker-restart.test.ts` (real restart), `messaging-migration.test.ts` |
+| 10  | Implemented: OTLP to Jaeger; HTTP, fetch, PostgreSQL and RabbitMQ propagation                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   | `tracing.test.ts`                                                                                                               |
+| —   | Valkey-backed rate limiting with fallback                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       | `rate-limit-store.test.ts`, `rate-limit.test.ts`                                                                                |
 
 Not done in 1A (deliberately): BIN ranges (1B), authentication activity views (1B), external
 anchoring of audit chain heads, session listing per user.
@@ -90,7 +97,7 @@ anchoring of audit chain heads, session listing per user.
 | F-04 One Valkey credential for every service                                             | Documented as a known limitation. Per-service Valkey ACL users: **open, Stage 1B entry condition**                                                                                                                                                                                                                                                                                                                                      | SECURITY_MODEL                                                    |
 | F-05 Proxy trust covers all private ranges                                               | Open (before production)                                                                                                                                                                                                                                                                                                                                                                                                                | —                                                                 |
 | F-06 Yarn/corepack and writable app files in runtime images                              | Open (before production)                                                                                                                                                                                                                                                                                                                                                                                                                | —                                                                 |
-| F-07 Audit gate accepted a missing/`null` `patched_versions`                             | Fixed: requires pnpm's explicit no-fix evidence; exception scope unchanged                                                                                                                                                                                                                                                                                                                                                              | `audit-gate.test.mjs`                                             |
+| F-07 Audit gate accepted a missing/`null` `patched_versions`                             | Fixed: the gate requires pnpm's explicit no-fix evidence. The only exception it applied to (picomatch, GHSA-fc5q-39xc-vjpf) was **removed** in `a321ff8` after GitHub **withdrew** the advisory; this was a withdrawal, not a fix (no dependency or application code changed). No exception is in force; the audit reports 0 high, 0 critical and 2 moderate advisories (SECURITY_MODEL "Accepted dependency advisories")               | `audit-gate.test.mjs`                                             |
 | F-08 No privilege ceiling for issuer roles (ADR-036)                                     | **Open: Stage 1B entry condition** (issuer-role privilege ceiling and last-issuer-administrator protection)                                                                                                                                                                                                                                                                                                                             | —                                                                 |
 | F-09 identity-service holds Keycloak `manage-users`                                      | Documented as a known limitation; narrower rights before production                                                                                                                                                                                                                                                                                                                                                                     | SECURITY_MODEL                                                    |
 | F-10 Requirement 8 event substitution                                                    | Documented (row 8 above, ADR-028)                                                                                                                                                                                                                                                                                                                                                                                                       | —                                                                 |
@@ -103,22 +110,92 @@ anchoring of audit chain heads, session listing per user.
 
 ## Stage 1B — ACS protocol foundation and simulated Visa/Mastercard DS connectivity
 
-Prerequisite: Stage 1A complete, because 1B introduces authentication transaction data.
+Prerequisite: Stage 1A complete, because 1B introduces authentication transaction data. Stage 1A is
+complete (merged, PR #7); the four entry conditions below are additional prerequisites and are
+**not** met. **Stage 1B has not started.**
 
-**Stage 1B entry conditions** (open; each needs its own design and implementation task and owner
-approval. Stage 1B work may not start until all of them are met):
+**Stage 1B entry conditions** (four, all mandatory and all **open**). Each needs its own design and
+implementation task and owner approval. Stage 1B work may not start until all four have been
+implemented, tested and independently reviewed. Completing or merging Stage 1A does not authorise
+Stage 1B, and does not resolve or accept these findings.
 
-1. **F-02 RLS coverage.** Database protection for the tenant-attributable rows of `issuer.outbox`,
-   `identity.outbox` and `identity.user_account`. Also a catalogue test that every table holding
-   tenant data has a policy (SECURITY_MODEL "Row-level security coverage by table").
-2. **F-04 Per-service Valkey credentials.** One ACL user per service that needs Valkey, limited to
-   its own key prefix and commands. No Valkey credential for services that do not use it.
-3. **Shared RabbitMQ administrator credentials.** One broker user per service with least-privilege
-   permissions and validated `user-id`. audit-service accepts an event only from its authenticated
-   producer (ADR-028, ADR-031).
-4. **F-08 Issuer-role privilege ceiling.** Issuer user managers limited to the permissions they hold
-   in that issuer, and protection of an issuer's last active `issuer-administrator` (revises ADR-036's
-   issuer-role exception).
+1. **F-02: PostgreSQL tenant isolation.**
+   - **Required outcome:** no issuer can reach another issuer's tenant-attributable data through
+     application queries, outbox records, user-directory access or other database access paths, with
+     the protection enforced in the database. All tenant-attributable data is protected, including the
+     exposure in `issuer.outbox`, `identity.outbox` and `identity.user_account`.
+   - **Threat scope: in scope.** Cross-tenant access through the platform's normal database paths:
+     - request-handling queries, including incorrect or missing tenant filters;
+     - database functions;
+     - background jobs;
+     - outbox writing, relaying, retry and retention;
+     - user-directory access;
+     - any other path that could expose one issuer's tenant-attributable data to another issuer.
+
+     Work that legitimately needs cross-tenant access (for example the outbox relay, the audit
+     consumer and platform administration) must declare that scope explicitly. Tests must show that
+     tenant-scoped paths cannot obtain it.
+
+   - **Threat scope: separately tracked, not part of F-02.** A fully compromised service process or
+     service identity: code that runs its own transactions with the service's credentials, declares
+     or manipulates its own database tenant context, or misuses those credentials. The current
+     database-held tenant context cannot prevent this. It validates only the form of a declaration,
+     not the end user's entitlement (ADR-034, "Limits, stated plainly"; SECURITY_MODEL "The remaining
+     boundary, precisely"). It is tracked as a production-hardening item ("A tenant context that a
+     compromised service cannot widen"). This exclusion is **not** an acceptance of cross-tenant access
+     through normal application paths, and it does not narrow the required outcome above.
+   - **Implementation decision (open):** the F-02 design and implementation work selects the
+     mechanism, and the choice needs owner approval. The options are:
+     - tenant-isolation RLS;
+     - tenant-scoped database functions for the user directory;
+     - data minimisation;
+     - prompt purging of published outbox payloads;
+     - a combination of these.
+
+     Whatever is chosen must meet the outcome for every row. **Unpublished outbox rows are covered**:
+     rows pending publication, rows awaiting retry, and rows set aside after repeated failure must be
+     protected for their whole lifetime. Purging published payloads reduces retention only; **on its own
+     it is not sufficient protection**.
+
+   - **Tenant-isolation control catalogue.** SECURITY_MODEL "Row-level security coverage by table" is
+     extended into a catalogue. It lists every table in the tenant-context schemas, whether the table
+     holds tenant-attributable data and, for each such table:
+     - the database-enforced control applied, for example:
+       - an RLS policy keyed on the tenant;
+       - no direct privilege for the service role, with access only through tenant-scoped functions;
+       - minimisation, so that the table holds no tenant-attributable content;
+     - the tests that prove the control.
+   - **Automated catalogue test**, run against the migrated database. It fails if:
+     - any table in those schemas is missing from the catalogue, including tables added later;
+     - a table catalogued as holding tenant-attributable data has no control recorded;
+     - the recorded control is not present in the database (for example RLS not enabled or no
+       policy, or the service role still holding direct privileges on a function-only table).
+   - **Automated cross-tenant tests** for every catalogued table and every in-scope path. Using the
+     service's own database role in a tenant-A context:
+     - reading tenant-B rows returns nothing, and writing, changing or deleting them fails;
+     - for the outboxes, this covers rows in every state (pending, retrying, set aside, and published
+       but retained);
+     - for minimised tables, a test asserts that no tenant-attributable content is stored.
+   - No claim of universal RLS coverage, or of complete tenant isolation, until this is independently
+     reviewed.
+2. **F-04: Valkey service isolation.**
+   - An individual Valkey identity (ACL user) for each service that needs Valkey.
+   - Least-privilege ACLs: each service reaches only the key prefixes and commands it requires.
+   - No Valkey credential for services that do not use it.
+3. **F-08: Issuer-role privilege ceiling.**
+   - No privilege escalation through issuer roles, system or custom: an issuer user manager may
+     assign or remove only issuer roles whose permissions they hold in that issuer.
+   - No removal, disabling or demotion of an issuer's last active `issuer-administrator`.
+   - Regression tests for both.
+   - Revises ADR-036's issuer-role exception (see ADR-036, "Required revision before acceptance").
+4. **RabbitMQ: service identity and permissions** (ADR-028, ADR-031).
+   - An individual broker user for each service.
+   - Least-privilege configure, write and read permissions on the exchanges, queues and routing
+     patterns that service needs.
+   - Shared administrator credentials removed from service runtime configuration.
+   - Producer identity and message provenance validated, not taken from self-declared metadata:
+     validated `user-id`, and audit-service accepts an event only from its authenticated producer.
+   - Automated tests for all of the above.
 
 **Deferred to production hardening** (documented, not Stage 1B entry conditions):
 
