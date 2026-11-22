@@ -12,7 +12,7 @@
     "test:stack": "NODE_OPTIONS=--conditions=@atlas/source playwright test -c playwright.stack.config.ts"
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0"
+    "@playwright/test": "^1.65.1"
   },
   "dependencies": {
     "@atlas/contracts": "workspace:*"
