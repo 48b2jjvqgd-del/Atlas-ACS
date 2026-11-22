@@ -72,7 +72,7 @@ services:
 
   # Valkey (BSD-3-Clause) replaces Redis (ADR-019). Same protocol; clients use redis:// URLs.
   valkey:
-    image: valkey/valkey:9.1.3-alpine
+    image: valkey/valkey:9.1.4-alpine
     restart: unless-stopped
     command:
       [
