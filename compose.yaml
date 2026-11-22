@@ -235,7 +235,7 @@ services:
   # Trace backend (Apache-2.0). Receives OTLP over HTTP on 4318; UI on http://localhost:16686.
   jaeger:
     profiles: [services, tracing]
-    image: jaegertracing/jaeger:2.22.0
+    image: jaegertracing/jaeger:2.23.0
     restart: unless-stopped
     ports:
       - '127.0.0.1:16686:16686'
