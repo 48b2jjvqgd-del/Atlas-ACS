@@ -95,7 +95,7 @@ services:
       start_interval: 1s
 
   rabbitmq:
-    image: rabbitmq:4.4.0-management-alpine
+    image: rabbitmq:4.4.1-management-alpine
     restart: unless-stopped
     hostname: atlas-rabbitmq
     environment:
