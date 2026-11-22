@@ -40,7 +40,7 @@
     "fastify": "^5.12.8",
     "ioredis": "^6.0.0",
     "jose": "^6.2.13",
-    "openid-client": "^6.8.8"
+    "openid-client": "^6.9.0"
   },
   "files": [
     "dist"
